@@ -64,6 +64,35 @@ const DB = {
 const genId = (p = 'id') => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
 /* ═══════════════════════════════════════════════════════
+   GLOBAL WEBCAM & MEDIA STREAM REGISTRY
+═══════════════════════════════════════════════════════ */
+if (typeof window !== 'undefined') {
+  window._dp_active_streams = window._dp_active_streams || new Set();
+}
+
+function registerStream(stream) {
+  if (stream && typeof window !== 'undefined' && window._dp_active_streams) {
+    window._dp_active_streams.add(stream);
+  }
+}
+
+function stopGlobalWebcamStreams() {
+  if (typeof window !== 'undefined' && window._dp_active_streams) {
+    window._dp_active_streams.forEach(stream => {
+      try {
+        if (stream && stream.getTracks) {
+          stream.getTracks().forEach(track => {
+            track.stop();
+            track.enabled = false;
+          });
+        }
+      } catch (e) {}
+    });
+    window._dp_active_streams.clear();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
    SHARED COMPONENTS
 ═══════════════════════════════════════════════════════ */
 
@@ -168,10 +197,12 @@ function ShareModal({ open, exam, subject, onCancel }) {
 
 function Header({ showAdmin = false, adminMode = false, onLogout }) {
   const adminName = sessionStorage.getItem('dp_admin_name');
+  const isAdminLoggedIn = sessionStorage.getItem('dp_admin') === 'true';
+
   return (
     <header className="app-header">
       <div className="header-inner">
-        <Link to="/" className="brand">
+        <Link to={isAdminLoggedIn ? "/admin/dashboard" : "/"} className="brand">
           <div className="brand-logo-wrap">
             <img src="/logo.jpeg" alt="DevPhoenix" className="logo-blend" />
           </div>
@@ -195,7 +226,12 @@ function Header({ showAdmin = false, adminMode = false, onLogout }) {
               )}
             </div>
           )}
-          {showAdmin && !adminMode && (
+          {!adminMode && isAdminLoggedIn && (
+            <Link to="/admin/dashboard" className="btn btn-primary btn-sm">
+              <Lock size={13} /> Admin Dashboard
+            </Link>
+          )}
+          {!adminMode && !isAdminLoggedIn && showAdmin && (
             <Link to="/admin" className="btn btn-outline btn-sm">
               <Lock size={13} /> Admin Panel
             </Link>
@@ -210,6 +246,10 @@ function Header({ showAdmin = false, adminMode = false, onLogout }) {
    1. HOME PAGE
 ═══════════════════════════════════════════════════════ */
 function HomePage() {
+  useEffect(() => {
+    stopGlobalWebcamStreams();
+  }, []);
+
   const features = [
     { icon: Shield, title: 'AI Face Detection', desc: 'Real-time face tracking detects suspicious behaviour & secondary cameras', color: '#e63946' },
     { icon: Eye, title: 'Eye Tracking', desc: 'Monitors gaze direction and alerts when student looks away or takes photo', color: '#f77f00' },
@@ -436,6 +476,7 @@ function SystemCheck() {
       navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } })
         .then(s => {
           streamRef.current = s;
+          registerStream(s);
           if (videoRef.current) videoRef.current.srcObject = s;
           setCamOk(true);
         })
@@ -447,7 +488,7 @@ function SystemCheck() {
     return () => {
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      stopGlobalWebcamStreams();
     };
   }, [examId, navigate, studentName]);
 
@@ -456,6 +497,7 @@ function SystemCheck() {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
       streamRef.current = s;
+      registerStream(s);
       if (videoRef.current) videoRef.current.srcObject = s;
       setCamOk(true);
     } catch (err) {
@@ -466,7 +508,8 @@ function SystemCheck() {
   const go = async () => {
     if (!internet) { toast.error('No internet connection'); return; }
     setStarting(true);
-    if (streamRef.current) streamRef.current = null;
+    stopGlobalWebcamStreams();
+    if (videoRef.current) videoRef.current.srcObject = null;
     try {
       const el = document.documentElement;
       const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
@@ -602,9 +645,12 @@ function ExamTake() {
     if (qs.length === 0) { navigate('/'); return; }
     setQuestions(qs);
 
+    stopGlobalWebcamStreams();
+
     navigator.mediaDevices?.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } })
       .then(s => {
         streamRef.current = s;
+        registerStream(s);
         if (videoRef.current) videoRef.current.srcObject = s;
       })
       .catch(() => {});
@@ -621,7 +667,8 @@ function ExamTake() {
     setTimeout(enterFS, 500);
 
     return () => {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      stopGlobalWebcamStreams();
+      if (videoRef.current) videoRef.current.srcObject = null;
     };
   }, [examId, navigate, studentName]);
 
@@ -1015,6 +1062,7 @@ function ThankYouPage() {
   const [result, setResult] = useState(null);
 
   useEffect(() => {
+    stopGlobalWebcamStreams();
     const r = DB.results.get().find(r => r.id === resultId);
     setResult(r);
 
@@ -1098,9 +1146,15 @@ function ThankYouPage() {
           <Link to={`/result/${result.id}`} className="btn btn-secondary">
             <FileText size={15} /> Full Report
           </Link>
-          <Link to="/" className="btn btn-primary">
-            <Home size={15} /> Go Home
-          </Link>
+          {sessionStorage.getItem('dp_admin') === 'true' ? (
+            <Link to="/admin/dashboard" className="btn btn-primary">
+              <ArrowLeft size={15} /> Admin Dashboard
+            </Link>
+          ) : (
+            <Link to="/" className="btn btn-primary">
+              <Home size={15} /> Go Home
+            </Link>
+          )}
         </div>
       </div>
     </div>
@@ -1116,6 +1170,7 @@ function ResultPage() {
   const [questions, setQuestions] = useState([]);
 
   useEffect(() => {
+    stopGlobalWebcamStreams();
     const r = DB.results.get().find(r => r.id === id);
     setResult(r);
     if (r) {
@@ -1128,6 +1183,7 @@ function ResultPage() {
 
   const pct = result.totalMarks > 0 ? Math.round((result.score / result.totalMarks) * 100) : 0;
   const passed = pct >= 50;
+  const isAdmin = sessionStorage.getItem('dp_admin') === 'true';
 
   return (
     <div className="page-wrapper">
@@ -1145,7 +1201,15 @@ function ResultPage() {
               </div>
               <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{result.studentName} · {result.score}/{result.totalMarks} marks · {result.date}</p>
             </div>
-            <Link to="/" className="btn btn-secondary btn-sm"><Home size={14} /> Home</Link>
+            {isAdmin ? (
+              <Link to="/admin/dashboard" className="btn btn-primary btn-sm">
+                <ArrowLeft size={14} /> Back to Admin Dashboard
+              </Link>
+            ) : (
+              <Link to="/" className="btn btn-secondary btn-sm">
+                <Home size={14} /> Home
+              </Link>
+            )}
           </div>
 
           <h3 className="section-label">Answer Review</h3>
@@ -1215,6 +1279,7 @@ function ResultPage() {
 ═══════════════════════════════════════════════════════ */
 function CheatedPage() {
   useEffect(() => {
+    stopGlobalWebcamStreams();
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       try {
         const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;

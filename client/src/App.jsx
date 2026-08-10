@@ -252,29 +252,31 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   );
 }
 
-function PhoenixFlyIntro({ text = "Initializing Secure Proctored Environment..." }) {
+function PhoenixFlyIntro({ text = "Initializing Secure Proctored Environment...", onComplete }) {
   const [show, setShow] = useState(true);
+  const [isFading, setIsFading] = useState(false);
   const videoRef = useRef(null);
 
-  useEffect(() => {
-    // Safety fallback timer if video is long or fails to trigger onEnded
-    const timer = setTimeout(() => {
+  const handleVideoFinish = () => {
+    if (isFading) return;
+    setIsFading(true);
+    setTimeout(() => {
       setShow(false);
-    }, 7000);
-    return () => clearTimeout(timer);
-  }, []);
+      if (onComplete) onComplete();
+    }, 500);
+  };
 
   if (!show) return null;
 
   return (
-    <div className="phoenix-video-intro-overlay">
+    <div className={`phoenix-video-intro-overlay ${isFading ? 'video-fade-out' : ''}`}>
       <video
         ref={videoRef}
         src="/Video/no_no_a_mascort_can_fly_around.mp4"
         autoPlay
         playsInline
         muted
-        onEnded={() => setShow(false)}
+        onEnded={handleVideoFinish}
         className="phoenix-intro-video"
       />
       <div className="phoenix-video-overlay-glow" />
@@ -286,10 +288,6 @@ function PhoenixFlyIntro({ text = "Initializing Secure Proctored Environment..."
           <p className="phoenix-video-sub">{text}</p>
         </div>
       </div>
-
-      <button onClick={() => setShow(false)} className="phoenix-skip-btn">
-        Skip Intro &rarr;
-      </button>
     </div>
   );
 }

@@ -686,6 +686,19 @@ select.input { appearance: none; -webkit-appearance: none; }
 /* ─────────────────────────────────────────────
    STUDENT LANDING CARD
 ───────────────────────────────────────────── */
+@keyframes examCardReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(36px);
+    filter: blur(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
 .student-landing-card {
   max-width: 480px;
   width: 100%;
@@ -696,6 +709,7 @@ select.input { appearance: none; -webkit-appearance: none; }
   box-shadow: var(--shadow-lg);
   position: relative;
   z-index: 1;
+  animation: examCardReveal 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .exam-card-header {
   display: flex;
@@ -1439,6 +1453,12 @@ tbody tr:last-child { border-bottom: none; }
   justify-content: center;
   overflow: hidden;
   animation: fadeIn 0.3s ease;
+  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.video-fade-out {
+  opacity: 0 !important;
+  pointer-events: none;
 }
 
 .phoenix-intro-video {

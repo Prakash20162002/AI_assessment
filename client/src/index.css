@@ -130,17 +130,22 @@ a { text-decoration: none; color: inherit; }
   gap: 12px;
 }
 .brand-logo-wrap {
-  width: 38px;
   height: 38px;
-  border-radius: 10px;
-  overflow: hidden;
+  width: auto;
+  display: flex;
+  align-items: center;
+  overflow: visible;
   background: transparent;
   flex-shrink: 0;
 }
-.brand-logo-wrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.brand-logo-wrap img,
+.logo-blend {
+  height: 36px;
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  filter: invert(1) hue-rotate(180deg) contrast(1.2);
+  mix-blend-mode: screen;
 }
 .brand-text {
   display: flex;

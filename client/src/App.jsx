@@ -200,14 +200,11 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   const isAdminLoggedIn = sessionStorage.getItem('dp_admin') === 'true';
 
   const brandInner = (
-    <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer' }}>
+    <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer', gap: 10 }}>
       <div className="brand-logo-wrap">
         <img src="/logo.jpeg" alt="DevPhoenix" className="logo-blend" />
       </div>
-      <div className="brand-text">
-        <span className="brand-name">DevPhoenix</span>
-        <span className="brand-sub">AI Assessment</span>
-      </div>
+      <span className="badge badge-orange" style={{ fontSize: 9, padding: '3px 8px', letterSpacing: '.5px' }}>AI ASSESSMENT</span>
     </div>
   );
 

@@ -1427,88 +1427,163 @@ tbody tr:last-child { border-bottom: none; }
 }
 
 /* ─────────────────────────────────────────────
-   FLYING PHOENIX INTRO ANIMATION
+   REAL FULL-SCREEN FLYING PHOENIX ANIMATION
 ───────────────────────────────────────────── */
-.phoenix-intro-overlay {
+.phoenix-real-fly-overlay {
   position: fixed;
   inset: 0;
   z-index: 999999;
-  background: var(--bg-void);
+  background: radial-gradient(circle at center, #0f0b15 0%, #050507 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  padding-bottom: 60px;
   overflow: hidden;
-  animation: fadeOut 0.4s ease 2.1s forwards;
+  animation: fadeOut 0.5s ease 3.1s forwards;
 }
 
-.phoenix-fly-stage {
-  position: relative;
-  width: 280px;
-  height: 240px;
+.phoenix-particle-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.phoenix-fullscreen-flight-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.phoenix-real-bird-wrapper {
+  position: absolute;
+  width: 160px;
+  height: 160px;
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: phoenixFullFlightPath 3.2s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
 }
 
-.phoenix-flying-img {
+.phoenix-real-bird-img {
   width: 140px;
   height: 140px;
   border-radius: 50%;
   object-fit: cover;
   mix-blend-mode: screen;
-  filter: drop-shadow(0 0 30px rgba(247,127,0,.9)) drop-shadow(0 0 60px rgba(230,57,70,.7));
-  animation: phoenixFlyAround 2.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  filter: drop-shadow(0 0 35px #f77f00) drop-shadow(0 0 70px #e63946) drop-shadow(0 0 100px #fcbf49);
+  animation: wingFlapPulse 0.4s ease-in-out infinite alternate;
 }
 
-.phoenix-fly-aura {
+.phoenix-wing-aura {
   position: absolute;
-  width: 240px;
-  height: 240px;
+  inset: -30px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(247,127,0,0.3) 0%, rgba(230,57,70,0.18) 45%, transparent 70%);
-  animation: auraPulse 1.2s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(247, 127, 0, 0.45) 0%, rgba(230, 57, 70, 0.25) 50%, transparent 75%);
+  filter: blur(10px);
+  animation: auraGlowPulse 0.6s ease-in-out infinite alternate;
 }
 
-@keyframes phoenixFlyAround {
+.phoenix-fire-tail {
+  position: absolute;
+  width: 220px;
+  height: 40px;
+  right: 110px;
+  top: 60px;
+  background: linear-gradient(90deg, transparent 0%, rgba(247, 127, 0, 0.6) 40%, rgba(230, 57, 70, 0.8) 80%, rgba(252, 191, 73, 1) 100%);
+  border-radius: 999px;
+  filter: blur(12px);
+  transform-origin: right center;
+  animation: tailWiggle 0.3s ease-in-out infinite alternate;
+}
+
+/* Full Viewport 3D Spline Path across the Entire Screen */
+@keyframes phoenixFullFlightPath {
   0% {
-    transform: translate(-260px, 120px) scale(0.3) rotate(-35deg);
+    top: 100%;
+    left: -200px;
+    transform: scale(0.3) rotate(40deg);
     opacity: 0;
   }
-  25% {
-    transform: translate(140px, -90px) scale(0.85) rotate(20deg);
+  20% {
+    top: 15%;
+    left: 75vw;
+    transform: scale(0.85) rotate(-15deg);
     opacity: 1;
   }
-  55% {
-    transform: translate(-100px, -50px) scale(1.2) rotate(-15deg);
+  45% {
+    top: 65%;
+    left: 20vw;
+    transform: scale(1.4) rotate(25deg);
   }
-  80% {
-    transform: translate(40px, 20px) scale(1.05) rotate(8deg);
+  70% {
+    top: 25%;
+    left: 55vw;
+    transform: scale(1.1) rotate(-10deg);
   }
   100% {
-    transform: translate(0px, 0px) scale(1) rotate(0deg);
+    top: calc(50% - 140px);
+    left: calc(50% - 80px);
+    transform: scale(1) rotate(0deg);
     opacity: 1;
   }
 }
 
-@keyframes auraPulse {
-  0% { transform: scale(0.75); opacity: 0.3; }
-  100% { transform: scale(1.35); opacity: 0.95; }
+@keyframes wingFlapPulse {
+  0% { transform: scale(0.92) rotate(-3deg); }
+  100% { transform: scale(1.08) rotate(3deg); }
 }
 
-.phoenix-intro-title {
-  font-size: 22px;
+@keyframes auraGlowPulse {
+  0% { opacity: 0.5; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1.25); }
+}
+
+@keyframes tailWiggle {
+  0% { transform: scaleY(0.7) rotate(-4deg); }
+  100% { transform: scaleY(1.3) rotate(4deg); }
+}
+
+.phoenix-intro-banner {
+  position: relative;
+  z-index: 10;
+  text-align: center;
+  background: rgba(15, 11, 21, 0.75);
+  backdrop-filter: blur(16px);
+  padding: 16px 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(247, 127, 0, 0.3);
+  box-shadow: 0 0 40px rgba(247, 127, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: bannerSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both;
+}
+
+@keyframes bannerSlideUp {
+  0% { transform: translateY(40px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.phoenix-banner-title {
+  font-size: 20px;
   font-weight: 900;
   color: #fff;
-  margin-top: 20px;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
+  background: linear-gradient(135deg, #fff 0%, #fcbf49 50%, #f77f00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
-.phoenix-intro-sub {
-  font-size: 13px;
+.phoenix-banner-sub {
+  font-size: 12px;
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: 3px;
   letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 /* ─────────────────────────────────────────────

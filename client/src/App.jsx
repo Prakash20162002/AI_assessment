@@ -252,23 +252,108 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   );
 }
 
-function PhoenixFlyIntro({ text = "Preparing Assessment Environment..." }) {
+function PhoenixFlyIntro({ text = "Preparing AI Assessment Environment..." }) {
   const [show, setShow] = useState(true);
+  const canvasRef = useRef(null);
+
   useEffect(() => {
-    const timer = setTimeout(() => setShow(false), 2400);
-    return () => clearTimeout(timer);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+
+    let width = (canvas.width = window.innerWidth);
+    let height = (canvas.height = window.innerHeight);
+
+    const handleResize = () => {
+      if (canvas) {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    const particles = [];
+    const particleCount = 70;
+
+    for (let i = 0; i < particleCount; i++) {
+      particles.push({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        vx: (Math.random() - 0.5) * 2.2,
+        vy: -Math.random() * 3.5 - 1.2,
+        size: Math.random() * 3.8 + 1,
+        alpha: Math.random() * 0.85 + 0.15,
+        decay: Math.random() * 0.015 + 0.005,
+        color: Math.random() > 0.4 ? '#f77f00' : Math.random() > 0.5 ? '#fcbf49' : '#e63946',
+      });
+    }
+
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+
+      particles.forEach((p, idx) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= p.decay;
+
+        if (p.alpha <= 0 || p.y < 0) {
+          particles[idx] = {
+            x: Math.random() * width,
+            y: height + 10,
+            vx: (Math.random() - 0.5) * 2.2,
+            vy: -Math.random() * 3.5 - 1.2,
+            size: Math.random() * 3.8 + 1,
+            alpha: Math.random() * 0.85 + 0.15,
+            decay: Math.random() * 0.015 + 0.005,
+            color: Math.random() > 0.4 ? '#f77f00' : Math.random() > 0.5 ? '#fcbf49' : '#e63946',
+          };
+        }
+
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = p.color;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      animationFrameId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    const timer = setTimeout(() => setShow(false), 3400);
+
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   if (!show) return null;
 
   return (
-    <div className="phoenix-intro-overlay">
-      <div className="phoenix-fly-stage">
-        <div className="phoenix-fly-aura" />
-        <img src="/mascot.jpeg" alt="Phoenix" className="phoenix-flying-img" />
+    <div className="phoenix-real-fly-overlay">
+      <canvas ref={canvasRef} className="phoenix-particle-canvas" />
+
+      {/* Full Viewport Flying Phoenix */}
+      <div className="phoenix-fullscreen-flight-stage">
+        <div className="phoenix-real-bird-wrapper">
+          <div className="phoenix-fire-tail" />
+          <div className="phoenix-wing-aura" />
+          <img src="/mascot.jpeg" alt="Flying Phoenix" className="phoenix-real-bird-img" />
+        </div>
       </div>
-      <h3 className="phoenix-intro-title gradient-text">DevPhoenix AI Assessment</h3>
-      <p className="phoenix-intro-sub">{text}</p>
+
+      <div className="phoenix-intro-banner">
+        <h2 className="phoenix-banner-title">DevPhoenix AI Assessment</h2>
+        <p className="phoenix-banner-sub">{text}</p>
+      </div>
     </div>
   );
 }

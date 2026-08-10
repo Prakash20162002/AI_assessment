@@ -4,6 +4,9 @@ import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
 
+const SOCKET_URL =
+  import.meta.env.VITE_API_URL || window.location.origin;
+
 export const SocketProvider = ({ children }) => {
   const { user } = useAuth();
   const socketRef = useRef(null);
@@ -16,11 +19,13 @@ export const SocketProvider = ({ children }) => {
         socketRef.current = null;
         setConnected(false);
       }
+
       return;
     }
 
     const token = localStorage.getItem('accessToken');
-    socketRef.current = io('/', {
+
+    socketRef.current = io(SOCKET_URL, {
       auth: { token },
       transports: ['websocket'],
       reconnection: true,
@@ -37,15 +42,26 @@ export const SocketProvider = ({ children }) => {
       setConnected(false);
     });
 
+    socketRef.current.on('connect_error', (error) => {
+      console.error('❌ Socket connection error:', error.message);
+      setConnected(false);
+    });
+
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
     };
   }, [user]);
 
   return (
-    <SocketContext.Provider value={{ socket: socketRef.current, connected }}>
+    <SocketContext.Provider
+      value={{
+        socket: socketRef.current,
+        connected,
+      }}
+    >
       {children}
     </SocketContext.Provider>
   );
@@ -53,6 +69,10 @@ export const SocketProvider = ({ children }) => {
 
 export const useSocket = () => {
   const ctx = useContext(SocketContext);
-  if (!ctx) throw new Error('useSocket must be used within SocketProvider');
+
+  if (!ctx) {
+    throw new Error('useSocket must be used within SocketProvider');
+  }
+
   return ctx;
 };

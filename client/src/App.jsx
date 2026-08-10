@@ -195,22 +195,32 @@ function ShareModal({ open, exam, subject, onCancel }) {
   );
 }
 
-function Header({ showAdmin = false, adminMode = false, onLogout }) {
+function Header({ showAdmin = false, adminMode = false, disableBrandLink = false, onLogout }) {
   const adminName = sessionStorage.getItem('dp_admin_name');
   const isAdminLoggedIn = sessionStorage.getItem('dp_admin') === 'true';
+
+  const brandInner = (
+    <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer' }}>
+      <div className="brand-logo-wrap">
+        <img src="/logo.jpeg" alt="DevPhoenix" className="logo-blend" />
+      </div>
+      <div className="brand-text">
+        <span className="brand-name">DevPhoenix</span>
+        <span className="brand-sub">AI Assessment</span>
+      </div>
+    </div>
+  );
 
   return (
     <header className="app-header">
       <div className="header-inner">
-        <Link to={isAdminLoggedIn ? "/admin/dashboard" : "/"} className="brand">
-          <div className="brand-logo-wrap">
-            <img src="/logo.jpeg" alt="DevPhoenix" className="logo-blend" />
-          </div>
-          <div className="brand-text">
-            <span className="brand-name">DevPhoenix</span>
-            <span className="brand-sub">AI Assessment</span>
-          </div>
-        </Link>
+        {disableBrandLink ? (
+          brandInner
+        ) : (
+          <Link to={isAdminLoggedIn ? "/admin/dashboard" : "/"} style={{ textDecoration: 'none' }}>
+            {brandInner}
+          </Link>
+        )}
         <div className="header-actions">
           {adminMode && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -239,6 +249,27 @@ function Header({ showAdmin = false, adminMode = false, onLogout }) {
         </div>
       </div>
     </header>
+  );
+}
+
+function PhoenixFlyIntro({ text = "Preparing Assessment Environment..." }) {
+  const [show, setShow] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setShow(false), 2400);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!show) return null;
+
+  return (
+    <div className="phoenix-intro-overlay">
+      <div className="phoenix-fly-stage">
+        <div className="phoenix-fly-aura" />
+        <img src="/mascot.jpeg" alt="Phoenix" className="phoenix-flying-img" />
+      </div>
+      <h3 className="phoenix-intro-title gradient-text">DevPhoenix AI Assessment</h3>
+      <p className="phoenix-intro-sub">{text}</p>
+    </div>
   );
 }
 
@@ -393,7 +424,8 @@ function StudentLanding() {
 
   return (
     <div className="page-wrapper">
-      <Header />
+      <PhoenixFlyIntro text="Preparing Assessment Environment..." />
+      <Header disableBrandLink showAdmin={false} />
       <div className="center-page">
         <div className="glow glow-1" style={{ top: '-200px', left: '-150px' }} />
         <div className="student-landing-card page-enter">

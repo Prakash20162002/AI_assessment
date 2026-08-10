@@ -1427,6 +1427,97 @@ tbody tr:last-child { border-bottom: none; }
 }
 
 /* ─────────────────────────────────────────────
+   VIDEO PHOENIX INTRO ANIMATION
+───────────────────────────────────────────── */
+.phoenix-video-intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  animation: fadeIn 0.3s ease;
+}
+
+.phoenix-intro-video {
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  display: block;
+}
+
+.phoenix-video-overlay-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 40%, rgba(5,5,7,0.7) 100%);
+  box-shadow: inset 0 0 100px rgba(0,0,0,0.8);
+}
+
+.phoenix-video-banner {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 11, 21, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 14px 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(247, 127, 0, 0.4);
+  box-shadow: 0 0 40px rgba(247, 127, 0, 0.3), 0 10px 30px rgba(0,0,0,0.5);
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
+}
+
+.phoenix-video-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.2px;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.phoenix-video-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 0 0;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.phoenix-skip-btn {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.phoenix-skip-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+/* ─────────────────────────────────────────────
    REAL FULL-SCREEN FLYING PHOENIX ANIMATION
 ───────────────────────────────────────────── */
 .phoenix-real-fly-overlay {

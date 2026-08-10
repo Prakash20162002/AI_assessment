@@ -252,108 +252,44 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   );
 }
 
-function PhoenixFlyIntro({ text = "Preparing AI Assessment Environment..." }) {
+function PhoenixFlyIntro({ text = "Initializing Secure Proctored Environment..." }) {
   const [show, setShow] = useState(true);
-  const canvasRef = useRef(null);
+  const videoRef = useRef(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let animationFrameId;
-
-    let width = (canvas.width = window.innerWidth);
-    let height = (canvas.height = window.innerHeight);
-
-    const handleResize = () => {
-      if (canvas) {
-        width = canvas.width = window.innerWidth;
-        height = canvas.height = window.innerHeight;
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    const particles = [];
-    const particleCount = 70;
-
-    for (let i = 0; i < particleCount; i++) {
-      particles.push({
-        x: Math.random() * width,
-        y: Math.random() * height,
-        vx: (Math.random() - 0.5) * 2.2,
-        vy: -Math.random() * 3.5 - 1.2,
-        size: Math.random() * 3.8 + 1,
-        alpha: Math.random() * 0.85 + 0.15,
-        decay: Math.random() * 0.015 + 0.005,
-        color: Math.random() > 0.4 ? '#f77f00' : Math.random() > 0.5 ? '#fcbf49' : '#e63946',
-      });
-    }
-
-    const render = () => {
-      ctx.clearRect(0, 0, width, height);
-
-      particles.forEach((p, idx) => {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.alpha -= p.decay;
-
-        if (p.alpha <= 0 || p.y < 0) {
-          particles[idx] = {
-            x: Math.random() * width,
-            y: height + 10,
-            vx: (Math.random() - 0.5) * 2.2,
-            vy: -Math.random() * 3.5 - 1.2,
-            size: Math.random() * 3.8 + 1,
-            alpha: Math.random() * 0.85 + 0.15,
-            decay: Math.random() * 0.015 + 0.005,
-            color: Math.random() > 0.4 ? '#f77f00' : Math.random() > 0.5 ? '#fcbf49' : '#e63946',
-          };
-        }
-
-        ctx.save();
-        ctx.globalAlpha = p.alpha;
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = p.color;
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      });
-
-      animationFrameId = requestAnimationFrame(render);
-    };
-
-    render();
-
-    const timer = setTimeout(() => setShow(false), 3400);
-
-    return () => {
-      clearTimeout(timer);
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener('resize', handleResize);
-    };
+    // Safety fallback timer if video is long or fails to trigger onEnded
+    const timer = setTimeout(() => {
+      setShow(false);
+    }, 7000);
+    return () => clearTimeout(timer);
   }, []);
 
   if (!show) return null;
 
   return (
-    <div className="phoenix-real-fly-overlay">
-      <canvas ref={canvasRef} className="phoenix-particle-canvas" />
+    <div className="phoenix-video-intro-overlay">
+      <video
+        ref={videoRef}
+        src="/Video/no_no_a_mascort_can_fly_around.mp4"
+        autoPlay
+        playsInline
+        muted
+        onEnded={() => setShow(false)}
+        className="phoenix-intro-video"
+      />
+      <div className="phoenix-video-overlay-glow" />
 
-      {/* Full Viewport Flying Phoenix */}
-      <div className="phoenix-fullscreen-flight-stage">
-        <div className="phoenix-real-bird-wrapper">
-          <div className="phoenix-fire-tail" />
-          <div className="phoenix-wing-aura" />
-          <img src="/mascot.jpeg" alt="Flying Phoenix" className="phoenix-real-bird-img" />
+      <div className="phoenix-video-banner">
+        <div className="live-dot" style={{ background: '#f77f00' }} />
+        <div>
+          <h3 className="phoenix-video-title">DevPhoenix AI Assessment</h3>
+          <p className="phoenix-video-sub">{text}</p>
         </div>
       </div>
 
-      <div className="phoenix-intro-banner">
-        <h2 className="phoenix-banner-title">DevPhoenix AI Assessment</h2>
-        <p className="phoenix-banner-sub">{text}</p>
-      </div>
+      <button onClick={() => setShow(false)} className="phoenix-skip-btn">
+        Skip Intro &rarr;
+      </button>
     </div>
   );
 }

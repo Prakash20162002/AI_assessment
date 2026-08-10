@@ -202,7 +202,7 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   const brandInner = (
     <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer', gap: 10 }}>
       <div className="brand-logo-wrap">
-        <img src="/logo.jpeg" alt="DevPhoenix" className="logo-blend" />
+        <img src="/logo.png" alt="DevPhoenix" className="header-logo-img" />
       </div>
       <span className="badge badge-orange" style={{ fontSize: 9, padding: '3px 8px', letterSpacing: '.5px' }}>AI ASSESSMENT</span>
     </div>
@@ -977,6 +977,9 @@ function ExamTake() {
       {/* Exam Header */}
       <header className="exam-header">
         <div className="exam-header-left">
+          <div className="brand-logo-wrap" style={{ marginRight: 6 }}>
+            <img src="/logo.png" alt="DevPhoenix" className="header-logo-img" />
+          </div>
           <div className="proctor-badge">
             <div className="live-dot" />
             <span>Proctored</span>

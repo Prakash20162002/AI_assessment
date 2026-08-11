@@ -1289,6 +1289,9 @@ select.input { appearance: none; -webkit-appearance: none; }
 }
 .admin-sidebar-inner { padding: 18px 12px; display: flex; flex-direction: column; gap: 3px; }
 
+/* Mobile subbar is hidden on desktop — only shown via media query */
+.admin-mobile-subbar { display: none; }
+
 .admin-main {
   flex: 1;
   padding: 36px 40px;

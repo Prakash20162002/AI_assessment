@@ -743,6 +743,7 @@ function ExamTake() {
   const terminatedRef = useRef(false);
   const warningCooldown = useRef(false);
   const timerRef = useRef(null);
+  const mountTimeRef = useRef(Date.now());
 
   const noFaceFramesRef = useRef(0);
   const multiFaceFramesRef = useRef(0);
@@ -872,38 +873,6 @@ function ExamTake() {
       })
       .catch(() => { });
 
-    const mountTimeRef = useRef(Date.now());
-
-    // Sync questions from backend API if available
-    useEffect(() => {
-      if (!examId) return;
-      api.get(`/admin/exams/${examId}/questions`)
-        .then(({ data }) => {
-          if (data?.data?.length > 0) {
-            const formatted = data.data.map((q) => ({
-              id: q._id,
-              subjectId: ex?.subjectId || 's1',
-              questionText: q.questionText,
-              options: q.options,
-              correctAnswer: q.correctAnswer,
-              marks: q.marks || 5,
-              explanation: q.explanation || '',
-            }));
-            setQuestions(formatted);
-          }
-        })
-        .catch(() => {});
-    }, [examId, ex?.subjectId]);
-
-    // Initial Fullscreen Check
-    useEffect(() => {
-      if (isMobile) return;
-      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
-      if (!inFS) {
-        setIsFullscreen(false);
-      }
-    }, []);
-
     const enterFS = async () => {
       document.body.classList.add('mobile-fullscreen-active');
       if (isMobile) {
@@ -927,6 +896,36 @@ function ExamTake() {
       if (videoRef.current) videoRef.current.srcObject = null;
     };
   }, [examId, navigate, studentName]);
+
+  // Sync questions from backend API if available
+  useEffect(() => {
+    if (!examId) return;
+    api.get(`/admin/exams/${examId}/questions`)
+      .then(({ data }) => {
+        if (data?.data?.length > 0) {
+          const formatted = data.data.map((q) => ({
+            id: q._id,
+            subjectId: ex?.subjectId || 's1',
+            questionText: q.questionText,
+            options: q.options,
+            correctAnswer: q.correctAnswer,
+            marks: q.marks || 5,
+            explanation: q.explanation || '',
+          }));
+          setQuestions(formatted);
+        }
+      })
+      .catch(() => {});
+  }, [examId, ex?.subjectId]);
+
+  // Initial Fullscreen Check
+  useEffect(() => {
+    if (isMobile) return;
+    const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    if (!inFS) {
+      setIsFullscreen(false);
+    }
+  }, []);
 
   // Load face-api.js models
   useEffect(() => {

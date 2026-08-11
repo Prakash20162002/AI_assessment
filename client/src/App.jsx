@@ -1677,7 +1677,7 @@ function AdminDashboard() {
   const [qText, setQText] = useState('');
   const [qOpts, setQOpts] = useState({ A: '', B: '', C: '', D: '' });
   const [qAns, setQAns] = useState('A');
-  const [qMarks, setQMarks] = useState(5);
+  const [qMarks, setQMarks] = useState(1);
   const [qExpl, setQExpl] = useState('');
   const [editQId, setEditQId] = useState(null);
 

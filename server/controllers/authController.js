@@ -32,27 +32,31 @@ const register = async (req, res, next) => {
     }
 
     // Check existing user
-    const existingUser = await User.findOne({
+    let user = await User.findOne({
       email: normalizedEmail,
     });
 
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email already registered',
+    if (user) {
+      if (user.isVerified) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already registered. Please login instead.',
+        });
+      }
+      // If student exists but is unverified, update credentials and re-issue fresh OTP
+      user.name = name.trim();
+      user.password = password;
+    } else {
+      user = new User({
+        name: name.trim(),
+        email: normalizedEmail,
+        password,
+        role: 'student',
+        isVerified: false,
       });
     }
 
-    // Create student
-    const user = new User({
-      name: name.trim(),
-      email: normalizedEmail,
-      password,
-      role: 'student',
-      isVerified: false,
-    });
-
-    // Generate OTP
+    // Generate fresh OTP
     const otp = user.generateOTP();
 
     // Save user
@@ -60,14 +64,14 @@ const register = async (req, res, next) => {
 
     // Send OTP asynchronously in background (non-blocking for instant UI response)
     sendOTPEmail(user.email, user.name, otp, 'verification')
-      .then(() => console.log(`📧 [EMAIL SENT] OTP delivered to ${user.email}`))
+      .then(() => console.log(`📧 [EMAIL SENT] Fresh OTP delivered to ${user.email}`))
       .catch(emailErr => console.error('📧 [SMTP NOTICE] Async email dispatch error:', emailErr.message));
 
-    console.log(`🔑 [OTP CODE] Verification OTP for ${user.email}: ${otp}`);
+    console.log(`🔑 [FRESH OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
     return res.status(201).json({
       success: true,
-      message: 'Registration successful. Please check your email for OTP.',
+      message: 'Registration successful. A 6-digit OTP code has been sent to your email.',
       userId: user._id,
     });
   } catch (error) {
@@ -108,10 +112,13 @@ const verifyOTP = async (req, res, next) => {
       });
     }
 
-    if (!user.otp || user.otp !== otp.toString()) {
+    const cleanEntered = otp.toString().trim();
+    const cleanStored = (user.otp || '').toString().trim();
+
+    if (!cleanStored || cleanStored !== cleanEntered) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid OTP',
+        message: 'Invalid OTP. Please check the latest code sent to your email.',
       });
     }
 
@@ -247,9 +254,18 @@ const login = async (req, res, next) => {
       user.role === 'student' &&
       !user.isVerified
     ) {
+      const freshOtp = user.generateOTP();
+      await user.save();
+
+      sendOTPEmail(user.email, user.name, freshOtp, 'verification')
+        .then(() => console.log(`📧 [EMAIL SENT] Unverified login fresh OTP delivered to ${user.email}`))
+        .catch(emailErr => console.error('📧 [SMTP NOTICE] Async email dispatch error:', emailErr.message));
+
+      console.log(`🔑 [LOGIN UNVERIFIED FRESH OTP] Verification OTP for ${user.email}: ${freshOtp}`);
+
       return res.status(403).json({
         success: false,
-        message: 'Please verify your email first',
+        message: 'Please verify your email first. A new 6-digit OTP code has been sent to your email.',
         userId: user._id,
         requiresVerification: true,
       });

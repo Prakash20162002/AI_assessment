@@ -40,7 +40,7 @@ const register = async (req, res, next) => {
       if (user.isVerified) {
         return res.status(400).json({
           success: false,
-          message: 'Email already registered. Please login instead.',
+          message: 'Email already Registered. Please login instead.',
         });
       }
       // If student exists but is unverified, update credentials and re-issue fresh OTP

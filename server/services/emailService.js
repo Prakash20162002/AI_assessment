@@ -15,19 +15,49 @@ const createTransporter = () => {
   });
 };
 
-const sendEmail = async ({ to, subject, html }) => {
-  const transporter = createTransporter();
+let fallbackTransporter = null;
 
+const sendEmail = async ({ to, subject, html }) => {
   const mailOptions = {
-    from: `"ExamPlatform" <${process.env.EMAIL_USER}>`,
+    from: `"ExamPlatform" <${process.env.EMAIL_USER || 'no-reply@examplatform.com'}>`,
     to,
     subject,
     html,
   };
 
-  const info = await transporter.sendMail(mailOptions);
-  console.log(`📧 Email sent: ${info.messageId}`);
-  return info;
+  try {
+    const transporter = createTransporter();
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`📧 [REAL EMAIL SENT] Delivered to ${to} (MessageId: ${info.messageId})`);
+    return info;
+  } catch (primaryErr) {
+    console.error(`⚠️ [PRIMARY SMTP ERROR]: ${primaryErr.message}`);
+    console.log(`🔄 Attempting Ethereal test mail fallback...`);
+
+    try {
+      if (!fallbackTransporter) {
+        const testAccount = await nodemailer.createTestAccount();
+        fallbackTransporter = nodemailer.createTransport({
+          host: 'smtp.ethereal.email',
+          port: 587,
+          secure: false,
+          auth: {
+            user: testAccount.user,
+            pass: testAccount.pass,
+          },
+        });
+      }
+
+      const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
+      const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
+      console.log(`✅ [TEST EMAIL SENT] Delivered via Ethereal Mail!`);
+      console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
+      return fallbackInfo;
+    } catch (fallbackErr) {
+      console.error(`❌ [FALLBACK ERROR]: ${fallbackErr.message}`);
+      throw primaryErr;
+    }
+  }
 };
 
 const sendOTPEmail = async (email, name, otp, type = 'verification') => {

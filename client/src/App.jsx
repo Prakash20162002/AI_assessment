@@ -22,7 +22,6 @@ const ADMIN_ACCOUNTS = [
   { loginId: 'rohit', password: 'MERN2026', name: 'Rohit Pandit' },
   { loginId: 'Prakash Halwai', password: 'Devops2026', name: 'Prakash Halwai' },
   { loginId: 'prakash', password: 'Devops2026', name: 'Prakash Halwai' },
-  { loginId: 'admin', password: 'devphoenix2026', name: 'System Admin' },
 ];
 
 const MAX_WARNINGS = 3;
@@ -87,15 +86,15 @@ function stopGlobalWebcamStreams() {
             track.enabled = false;
           });
         }
-      } catch (e) {}
+      } catch (e) { }
     });
     window._dp_active_streams.clear();
   }
   if (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement)) {
     try {
       const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-      if (efs) efs.call(document).catch(() => {});
-    } catch (e) {}
+      if (efs) efs.call(document).catch(() => { });
+    } catch (e) { }
   }
 }
 
@@ -149,7 +148,7 @@ function ShareModal({ open, exam, subject, onCancel }) {
         title: exam.title,
         text: `Join assessment: ${exam.title}`,
         url: url
-      }).catch(() => {});
+      }).catch(() => { });
     } else {
       copyUrl();
     }
@@ -742,7 +741,7 @@ function ExamTake() {
         registerStream(s);
         if (videoRef.current) videoRef.current.srcObject = s;
       })
-      .catch(() => {});
+      .catch(() => { });
 
     const enterFS = async () => {
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -750,7 +749,7 @@ function ExamTake() {
           const el = document.documentElement;
           const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
           if (rfs) await rfs.call(el);
-        } catch {}
+        } catch { }
       }
     };
     setTimeout(enterFS, 500);
@@ -771,7 +770,7 @@ function ExamTake() {
         await faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl);
         await faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelUrl);
         setFaceApiReady(true);
-      } catch {}
+      } catch { }
     };
     loadModels();
   }, []);
@@ -830,7 +829,7 @@ function ExamTake() {
             }
           }
         }
-      } catch {}
+      } catch { }
     }, 2800);
     return () => clearInterval(interval);
   }, [faceApiReady, isFullscreen, triggerWarning]);
@@ -914,7 +913,7 @@ function ExamTake() {
     if (streamRef.current) {
       try {
         streamRef.current.getTracks().forEach(t => t.stop());
-      } catch {}
+      } catch { }
       streamRef.current = null;
     }
     if (videoRef.current) {
@@ -923,8 +922,8 @@ function ExamTake() {
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       try {
         const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-        if (efs) efs.call(document).catch(() => {});
-      } catch {}
+        if (efs) efs.call(document).catch(() => { });
+      } catch { }
     }
   }, []);
 

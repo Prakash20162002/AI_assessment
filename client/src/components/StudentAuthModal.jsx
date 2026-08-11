@@ -116,8 +116,9 @@ export default function StudentAuthModal({
         toast.error('Unable to connect to server. Is the backend running?');
       } else {
         toast.error(
-          response?.message ||
-            'Login failed. Please check your credentials.'
+          response?.message === 'Invalid email or password'
+            ? 'Invalid email or password. If you do not have an account, please click Register.'
+            : (response?.message || 'Login failed. Please check your credentials.')
         );
       }
     } finally {
@@ -282,16 +283,19 @@ export default function StudentAuthModal({
     setLoading(true);
 
     try {
-      await api.post(
+      const { data } = await api.post(
         '/auth/resend-otp',
         {
           userId,
         }
       );
 
-      toast.success(
-        'A new OTP has been sent to your email.'
-      );
+      if (data?.devOtp) {
+        setOtp(String(data.devOtp));
+        toast.success(`New OTP Code: ${data.devOtp}`, { duration: 6000 });
+      } else {
+        toast.success('A new OTP has been sent to your email.');
+      }
     } catch (err) {
       toast.error(
         err.response?.data?.message ||

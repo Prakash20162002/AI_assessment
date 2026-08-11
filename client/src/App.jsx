@@ -1580,13 +1580,35 @@ function AdminLogin() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (sessionStorage.getItem('dp_admin') === 'true') navigate('/admin/dashboard');
+    if (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') {
+      navigate('/admin/dashboard');
+    }
   }, [navigate]);
 
   const login = async (e) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise(r => setTimeout(r, 400));
+
+    try {
+      const { data } = await api.post('/auth/login', {
+        email: loginId.trim(),
+        password: pw,
+      });
+
+      if (data?.success && data?.accessToken) {
+        localStorage.setItem('accessToken', data.accessToken);
+        sessionStorage.setItem('dp_admin', 'true');
+        sessionStorage.setItem('dp_admin_name', data.user?.name || loginId);
+        localStorage.setItem('dp_admin', 'true');
+        localStorage.setItem('dp_admin_name', data.user?.name || loginId);
+        toast.success(`Welcome back, ${data.user?.name || loginId}!`);
+        navigate('/admin/dashboard');
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.log('Backend admin login failed, attempting local fallback:', err.response?.data?.message || err.message);
+    }
 
     const matched = ADMIN_ACCOUNTS.find(
       acc => acc.loginId.toLowerCase() === loginId.trim().toLowerCase() && acc.password === pw
@@ -1595,6 +1617,8 @@ function AdminLogin() {
     if (matched) {
       sessionStorage.setItem('dp_admin', 'true');
       sessionStorage.setItem('dp_admin_name', matched.name);
+      localStorage.setItem('dp_admin', 'true');
+      localStorage.setItem('dp_admin_name', matched.name);
       toast.success(`Welcome back, ${matched.name}!`);
       navigate('/admin/dashboard');
     } else {
@@ -1651,8 +1675,13 @@ function AdminLogin() {
 ═══════════════════════════════════════════════════════ */
 function AdminGuard({ children }) {
   const navigate = useNavigate();
-  useEffect(() => { if (sessionStorage.getItem('dp_admin') !== 'true') navigate('/admin'); }, [navigate]);
-  if (sessionStorage.getItem('dp_admin') !== 'true') return null;
+  useEffect(() => {
+    const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
+    if (!isAdmin) navigate('/admin');
+  }, [navigate]);
+
+  const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
+  if (!isAdmin) return null;
   return children;
 }
 
@@ -1730,7 +1759,7 @@ function AdminDashboard() {
     }
   });
 
-  const reload = () => {
+  const reload = async () => {
     const subs = DB.subjects.get();
     setSubjects(subs);
     setQuestions(DB.questions.get());
@@ -1742,8 +1771,57 @@ function AdminDashboard() {
       setQSubId(subs[0].id);
       setFilterSubId(subs[0].id);
     }
+
+    try {
+      const [examsRes, resultsRes] = await Promise.allSettled([
+        api.get('/admin/exams'),
+        api.get('/admin/results'),
+      ]);
+
+      if (examsRes.status === 'fulfilled' && examsRes.value.data?.data) {
+        const remoteExams = examsRes.value.data.data.map(e => ({
+          id: e._id,
+          subjectId: e.subject || 's1',
+          title: e.title,
+          duration: (e.duration || 10) * 60,
+          createdAt: e.createdAt || new Date().toISOString(),
+          isPublished: e.isPublished,
+        }));
+        if (remoteExams.length > 0) {
+          setExams(prev => {
+            const combined = [...remoteExams];
+            prev.forEach(p => { if (!combined.some(c => c.id === p.id)) combined.push(p); });
+            DB.exams.set(combined);
+            return combined;
+          });
+        }
+      }
+
+      if (resultsRes.status === 'fulfilled' && resultsRes.value.data?.data) {
+        const remoteResults = resultsRes.value.data.data.map(r => ({
+          id: r._id,
+          examId: r.examId?._id || r.examId,
+          studentName: r.studentId?.name || 'Student',
+          score: r.score,
+          totalMarks: r.totalMarks,
+          status: r.isPassed ? 'COMPLETED' : 'FAILED',
+          cheated: !r.isPassed && r.status === 'voided',
+          date: new Date(r.createdAt || Date.now()).toLocaleString(),
+        }));
+        if (remoteResults.length > 0) {
+          setResults(prev => {
+            const combined = [...remoteResults];
+            prev.forEach(p => { if (!combined.some(c => c.id === p.id)) combined.push(p); });
+            DB.results.set(combined);
+            return combined;
+          });
+        }
+      }
+    } catch (err) {
+      console.log('Backend sync skipped:', err.message);
+    }
   };
-  useEffect(reload, []);
+  useEffect(() => { reload(); }, []);
 
   // When form subject dropdown changes, dynamically sync filterSubId
   const handleQSubSelect = (subId) => {
@@ -1760,6 +1838,9 @@ function AdminDashboard() {
   const logout = () => {
     sessionStorage.removeItem('dp_admin');
     sessionStorage.removeItem('dp_admin_name');
+    localStorage.removeItem('dp_admin');
+    localStorage.removeItem('dp_admin_name');
+    localStorage.removeItem('accessToken');
     toast.success('Logged out');
     navigate('/admin');
   };
@@ -1827,13 +1908,36 @@ function AdminDashboard() {
     onConfirm: () => { const l = questions.filter(q => q.id !== id); DB.questions.set(l); setQuestions(l); setConfirm(null); toast.success('Deleted'); }
   });
 
-  const createExam = (subId) => {
+  const createExam = async (subId) => {
     const sub = subjects.find(s => s.id === subId);
     if (!sub) return;
     const qs = questions.filter(q => q.subjectId === subId);
     if (qs.length === 0) { toast.error('Add questions to this subject first'); return; }
+    
     const ex = { id: genId('exam'), subjectId: subId, title: sub.name + ' Assessment', duration: 600, createdAt: new Date().toISOString() };
-    const list = [...exams, ex]; DB.exams.set(list); setExams(list);
+    const list = [...exams, ex];
+    DB.exams.set(list);
+    setExams(list);
+
+    try {
+      const { data } = await api.post('/admin/exams', {
+        title: sub.name + ' Assessment',
+        subject: sub.name,
+        duration: 10,
+        totalMarks: qs.reduce((sum, q) => sum + (q.marks || 1), 0) || 10,
+        passingMarks: Math.ceil((qs.reduce((sum, q) => sum + (q.marks || 1), 0) || 10) * 0.4),
+        isPublished: true,
+      });
+      if (data?.data?._id) {
+        ex.id = data.data._id;
+        const updatedList = list.map(item => item.id === ex.id || item.title === ex.title ? { ...item, id: data.data._id } : item);
+        DB.exams.set(updatedList);
+        setExams(updatedList);
+      }
+    } catch (err) {
+      console.log('Backend exam save skipped:', err.message);
+    }
+
     toast.success('Exam link created!');
   };
 

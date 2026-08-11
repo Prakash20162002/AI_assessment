@@ -58,7 +58,7 @@ const register = async (req, res, next) => {
     // Save user
     await user.save();
 
-    // Send OTP
+    let emailSent = true;
     try {
       await sendOTPEmail(
         user.email,
@@ -67,17 +67,19 @@ const register = async (req, res, next) => {
         'verification'
       );
     } catch (emailErr) {
-      console.error('Email send failed:', emailErr.message);
+      emailSent = false;
+      console.error('📧 [SMTP ERROR] Email send failed:', emailErr.message);
     }
 
-    console.log(`🔑 [DEV OTP] Generated verification OTP for ${user.email}: ${otp}`);
+    console.log(`🔑 [OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
     return res.status(201).json({
       success: true,
-      message:
-        'Registration successful. Please check your email for OTP.',
+      message: emailSent
+        ? 'Registration successful. Please check your email for OTP.'
+        : `Registration successful. (Email delivery failed — use code ${otp})`,
       userId: user._id,
-      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined,
+      devOtp: (!emailSent || process.env.NODE_ENV === 'development') ? otp : undefined,
     });
   } catch (error) {
     next(error);
@@ -181,16 +183,25 @@ const resendOTP = async (req, res, next) => {
 
     await user.save();
 
-    await sendOTPEmail(
-      user.email,
-      user.name,
-      otp,
-      'verification'
-    );
+    let emailSent = true;
+    try {
+      await sendOTPEmail(
+        user.email,
+        user.name,
+        otp,
+        'verification'
+      );
+    } catch (emailErr) {
+      emailSent = false;
+      console.error('📧 [SMTP ERROR] Resend OTP failed:', emailErr.message);
+    }
+
+    console.log(`🔑 [RESEND OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
     return res.json({
       success: true,
-      message: 'OTP resent successfully',
+      message: emailSent ? 'OTP resent successfully' : `OTP resent. (Email failed — use code ${otp})`,
+      devOtp: (!emailSent || process.env.NODE_ENV === 'development') ? otp : undefined,
     });
   } catch (error) {
     next(error);
@@ -224,8 +235,13 @@ const login = async (req, res, next) => {
       passwordLength: password.length,
     });
 
+    const escapedEmail = email.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const user = await User.findOne({
-      email: normalizedEmail,
+      $or: [
+        { email: normalizedEmail },
+        { name: new RegExp('^' + escapedEmail + '$', 'i') },
+        { name: new RegExp('^' + escapedEmail, 'i') },
+      ],
     }).select('+password');
 
     if (!user) {

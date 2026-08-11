@@ -11,6 +11,7 @@ import {
   ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles
 } from 'lucide-react';
 import LoadingScreen from './components/LoadingScreen.jsx';
+import StudentAuthModal from './components/StudentAuthModal.jsx';
 
 /* ═══════════════════════════════════════════════════════
    DATA LAYER  (localStorage)
@@ -403,14 +404,24 @@ function StudentLanding() {
   const [exam, setExam] = useState(null);
   const [subject, setSubject] = useState(null);
   const [questions, setQuestions] = useState([]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   useEffect(() => {
+    const sName = sessionStorage.getItem('dp_student');
+    if (sName) {
+      setName(sName);
+    } else {
+      setShowAuthModal(true);
+    }
+
     const exams = DB.exams.get();
-    const found = exams.find(e => e.id === examId);
+    let found = exams.find(e => e.id === examId);
+    if (!found && examId) {
+      found = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600, createdAt: new Date().toISOString() };
+    }
     if (!found) return;
     setExam(found);
 
-    const sName = sessionStorage.getItem('dp_student');
     const existing = DB.results.get().find(r => r.examId === examId && (sName ? r.studentName === sName : true));
     const submittedFlag = sName ? sessionStorage.getItem(`dp_submitted_${examId}_${sName}`) : null;
 
@@ -422,9 +433,9 @@ function StudentLanding() {
     }
 
     const subs = DB.subjects.get();
-    setSubject(subs.find(s => s.id === found.subjectId));
+    setSubject(subs.find(s => s.id === found.subjectId) || { name: 'Proctored Exam' });
     const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
-    setQuestions(qs);
+    setQuestions(qs.length > 0 ? qs : DB.questions.get());
   }, [examId, navigate]);
 
   const handleStart = (e) => {
@@ -458,8 +469,16 @@ function StudentLanding() {
 
   return (
     <div className="page-wrapper">
-      <PhoenixFlyIntro text="Preparing Assessment Environment..." />
       <Header disableBrandLink showAdmin={false} />
+      <StudentAuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        initialExamTitle={exam?.title}
+        onSuccess={(user) => {
+          setName(user.name);
+          setShowAuthModal(false);
+        }}
+      />
       <div className="center-page">
         <div className="glow glow-1" style={{ top: '-200px', left: '-150px' }} />
         <div className="student-landing-card page-enter">
@@ -490,12 +509,25 @@ function StudentLanding() {
           {/* Form */}
           <form onSubmit={handleStart} className="exam-register-form">
             <label className="form-label">Your Full Name</label>
-            <input
-              type="text" required
-              value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. Rahul Sharma"
-              className="input"
-            />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <input
+                type="text" required
+                value={name} onChange={e => setName(e.target.value)}
+                placeholder="e.g. Rahul Sharma"
+                className="input"
+                style={{ flex: 1 }}
+              />
+              {!sessionStorage.getItem('dp_student') && (
+                <button
+                  type="button"
+                  onClick={() => setShowAuthModal(true)}
+                  className="btn btn-secondary btn-sm"
+                  style={{ whiteSpace: 'nowrap', padding: '12px 14px' }}
+                >
+                  Student Auth
+                </button>
+              )}
+            </div>
 
             <div className="anti-cheat-notice">
               <ShieldAlert size={15} style={{ color: 'var(--danger)', flexShrink: 0 }} />

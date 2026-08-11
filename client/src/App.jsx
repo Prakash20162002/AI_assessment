@@ -509,22 +509,22 @@ function StudentLanding() {
           {/* Form */}
           <form onSubmit={handleStart} className="exam-register-form">
             <label className="form-label">Your Full Name</label>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <input
                 type="text" required
                 value={name} onChange={e => setName(e.target.value)}
                 placeholder="e.g. Rahul Sharma"
                 className="input"
-                style={{ flex: 1 }}
+                style={{ width: '100%' }}
               />
               {!sessionStorage.getItem('dp_student') && (
                 <button
                   type="button"
                   onClick={() => setShowAuthModal(true)}
-                  className="btn btn-secondary btn-sm"
-                  style={{ whiteSpace: 'nowrap', padding: '12px 14px' }}
+                  className="btn btn-secondary btn-full"
+                  style={{ gap: 8, justifyContent: 'center', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#a5b4fc', padding: '10px 14px', fontSize: 13 }}
                 >
-                  Student Auth
+                  <UserCheck size={16} /> Student Login / Register
                 </button>
               )}
             </div>
@@ -744,6 +744,85 @@ function ExamTake() {
 
   const noFaceCountRef = useRef(0);
 
+  const stopCameraAndExamProctoring = useCallback(() => {
+    if (streamRef.current) {
+      try {
+        streamRef.current.getTracks().forEach(t => t.stop());
+      } catch { }
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      try {
+        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+        if (efs) efs.call(document).catch(() => { });
+      } catch { }
+    }
+  }, []);
+
+  const saveResult = useCallback((cheated = false) => {
+    let score = 0;
+    questions.forEach(q => { if (answers[q.id] === q.correctAnswer) score += (q.marks || 0); });
+    const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
+    const r = {
+      id: genId('res'), examId, studentName,
+      score, totalMarks, cheated,
+      warnings: warningCountRef.current,
+      status: cheated ? 'Disqualified' : 'Completed',
+      date: new Date().toLocaleString(), answers,
+      timeTaken: (exam?.duration || 600) - timeLeft
+    };
+    DB.results.set([r, ...DB.results.get()]);
+    return r;
+  }, [answers, questions, examId, studentName, timeLeft, exam]);
+
+  const doSubmit = useCallback((cheated = false, timeUp = false) => {
+    if (!questions.length) return;
+    const r = saveResult(cheated);
+    if (studentName && examId) {
+      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
+    }
+    clearInterval(timerRef.current);
+    stopCameraAndExamProctoring();
+    stopGlobalWebcamStreams();
+    if (!cheated) {
+      if (timeUp) toast('⏰ Time is up! Exam auto-submitted.', { duration: 3000 });
+      else toast.success('✅ Exam submitted successfully!');
+      navigate(`/thankyou/${r.id}`, { replace: true });
+    } else {
+      navigate('/cheated', { replace: true });
+    }
+  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId]);
+
+  const triggerViolation = useCallback((reason) => {
+    if (terminatedRef.current) return;
+    terminatedRef.current = true;
+    clearInterval(timerRef.current);
+    stopCameraAndExamProctoring();
+    doSubmit(true);
+    setTimeout(() => navigate('/cheated'), 800);
+  }, [doSubmit, navigate, stopCameraAndExamProctoring]);
+
+  const triggerWarning = useCallback((reason) => {
+    if (terminatedRef.current || warningCooldown.current) return;
+    warningCooldown.current = true;
+    setTimeout(() => { warningCooldown.current = false; }, 8000);
+
+    const newCount = warningCountRef.current + 1;
+    warningCountRef.current = newCount;
+    setWarnings(newCount);
+    setWarningBanner({ msg: reason, count: newCount });
+    setTimeout(() => setWarningBanner(null), 6000);
+
+    if (newCount >= MAX_WARNINGS) {
+      setTimeout(() => triggerViolation(`${MAX_WARNINGS} warnings exceeded: ${reason}`), 500);
+    } else {
+      toast.error(`⚠️ Warning ${newCount}/${MAX_WARNINGS}: ${reason}`, { duration: 4500 });
+    }
+  }, [triggerViolation]);
+
   // Load exam data & start webcam (with Submission Guard)
   useEffect(() => {
     if (!studentName) { navigate('/'); return; }
@@ -757,12 +836,20 @@ function ExamTake() {
       return;
     }
 
-    const ex = DB.exams.get().find(e => e.id === examId);
-    if (!ex) { navigate('/'); return; }
+    let ex = DB.exams.get().find(e => e.id === examId);
+    if (!ex && examId) {
+      ex = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600 };
+    }
+    if (!ex) {
+      ex = DB.exams.get()[0] || { id: 'exam_demo', subjectId: 's1', title: 'Web Development Assessment', duration: 600 };
+    }
     setExam(ex);
     setTimeLeft(ex.duration || 600);
-    const qs = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
-    if (qs.length === 0) { navigate('/'); return; }
+
+    let qs = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
+    if (!qs || qs.length === 0) {
+      qs = DB.questions.get();
+    }
     setQuestions(qs);
 
     stopGlobalWebcamStreams();
@@ -905,7 +992,7 @@ function ExamTake() {
       document.removeEventListener('contextmenu', blockCtx);
       document.removeEventListener('keydown', blockKeys);
     };
-  }, []);
+  }, [triggerViolation, triggerWarning]);
 
   // Timer — PAUSES automatically when !isFullscreen (Exam Frozen)
   useEffect(() => {
@@ -921,86 +1008,7 @@ function ExamTake() {
       });
     }, 1000);
     return () => clearInterval(timerRef.current);
-  }, [exam, isFullscreen]);
-
-  const triggerWarning = useCallback((reason) => {
-    if (terminatedRef.current || warningCooldown.current) return;
-    warningCooldown.current = true;
-    setTimeout(() => { warningCooldown.current = false; }, 8000);
-
-    const newCount = warningCountRef.current + 1;
-    warningCountRef.current = newCount;
-    setWarnings(newCount);
-    setWarningBanner({ msg: reason, count: newCount });
-    setTimeout(() => setWarningBanner(null), 6000);
-
-    if (newCount >= MAX_WARNINGS) {
-      setTimeout(() => triggerViolation(`${MAX_WARNINGS} warnings exceeded: ${reason}`), 500);
-    } else {
-      toast.error(`⚠️ Warning ${newCount}/${MAX_WARNINGS}: ${reason}`, { duration: 4500 });
-    }
-  }, []);
-
-  const stopCameraAndExamProctoring = useCallback(() => {
-    if (streamRef.current) {
-      try {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      } catch { }
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      try {
-        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-        if (efs) efs.call(document).catch(() => { });
-      } catch { }
-    }
-  }, []);
-
-  const triggerViolation = useCallback((reason) => {
-    if (terminatedRef.current) return;
-    terminatedRef.current = true;
-    clearInterval(timerRef.current);
-    stopCameraAndExamProctoring();
-    doSubmit(true);
-    setTimeout(() => navigate('/cheated'), 800);
-  }, []);
-
-  const saveResult = useCallback((cheated = false) => {
-    let score = 0;
-    questions.forEach(q => { if (answers[q.id] === q.correctAnswer) score += (q.marks || 0); });
-    const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
-    const r = {
-      id: genId('res'), examId, studentName,
-      score, totalMarks, cheated,
-      warnings: warningCountRef.current,
-      status: cheated ? 'Disqualified' : 'Completed',
-      date: new Date().toLocaleString(), answers,
-      timeTaken: (exam?.duration || 600) - timeLeft
-    };
-    DB.results.set([r, ...DB.results.get()]);
-    return r;
-  }, [answers, questions, examId, studentName, timeLeft, exam]);
-
-  const doSubmit = useCallback((cheated = false, timeUp = false) => {
-    if (!questions.length) return;
-    const r = saveResult(cheated);
-    if (studentName && examId) {
-      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
-    }
-    clearInterval(timerRef.current);
-    stopCameraAndExamProctoring();
-    stopGlobalWebcamStreams();
-    if (!cheated) {
-      if (timeUp) toast('⏰ Time is up! Exam auto-submitted.', { duration: 3000 });
-      else toast.success('✅ Exam submitted successfully!');
-      navigate(`/thankyou/${r.id}`, { replace: true });
-    } else {
-      navigate('/cheated', { replace: true });
-    }
-  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId]);
+  }, [exam, isFullscreen, doSubmit]);
 
   const resumeFullscreen = async () => {
     try {

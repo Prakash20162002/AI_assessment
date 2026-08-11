@@ -17,11 +17,8 @@ import StudentAuthModal from './components/StudentAuthModal.jsx';
    DATA LAYER  (localStorage)
 ═══════════════════════════════════════════════════════ */
 const ADMIN_ACCOUNTS = [
-  { loginId: 'Nilesh Maity', password: 'datascience2026', name: 'Nilesh Maity' },
   { loginId: 'nilesh', password: 'datascience2026', name: 'Nilesh Maity' },
-  { loginId: 'Rohit Pandit', password: 'MERN2026', name: 'Rohit Pandit' },
   { loginId: 'rohit', password: 'MERN2026', name: 'Rohit Pandit' },
-  { loginId: 'Prakash Halwai', password: 'Devops2026', name: 'Prakash Halwai' },
   { loginId: 'prakash', password: 'Devops2026', name: 'Prakash Halwai' },
 ];
 

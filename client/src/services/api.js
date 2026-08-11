@@ -33,6 +33,15 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    // Network error — server is down or unreachable
+    if (!error.response) {
+      return Promise.reject(
+        Object.assign(error, {
+          message: 'Unable to connect to the server. Please check your connection.',
+        })
+      );
+    }
+
     if (
       error.response?.status === 401 &&
       error.response?.data?.code === 'TOKEN_EXPIRED' &&
@@ -56,7 +65,8 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         localStorage.removeItem('accessToken');
-        window.location.href = '/login';
+        // Redirect to root (SPA — no /login route exists)
+        window.location.href = '/';
 
         return Promise.reject(refreshError);
       }

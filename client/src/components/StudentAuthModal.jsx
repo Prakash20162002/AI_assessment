@@ -112,6 +112,8 @@ export default function StudentAuthModal({
             icon: '✉️',
           }
         );
+      } else if (!err.response) {
+        toast.error('Unable to connect to server. Is the backend running?');
       } else {
         toast.error(
           response?.message ||
@@ -179,10 +181,14 @@ export default function StudentAuthModal({
         err
       );
 
-      toast.error(
-        err.response?.data?.message ||
-          'Registration failed.'
-      );
+      if (!err.response) {
+        toast.error('Unable to connect to server. Is the backend running?');
+      } else {
+        toast.error(
+          err.response?.data?.message ||
+            'Registration failed. Please try again.'
+        );
+      }
     } finally {
       setLoading(false);
     }

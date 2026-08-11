@@ -722,10 +722,8 @@ function ExamTake() {
   const navigate = useNavigate();
   const studentName = sessionStorage.getItem('dp_student');
 
-  const isMobileDevice = () => {
-    if (typeof window === 'undefined') return false;
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
-  };
+  // Memoize once — doesn't change during session
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
   const [questions, setQuestions] = useState([]);
   const [exam, setExam] = useState(null);
@@ -736,8 +734,9 @@ function ExamTake() {
   const [warnings, setWarnings] = useState(0);
   const [warningBanner, setWarningBanner] = useState(null);
   const [faceApiReady, setFaceApiReady] = useState(false);
+  // On mobile: always treat as fullscreen (native API not supported on iOS)
   const [isFullscreen, setIsFullscreen] = useState(
-    !!(document.fullscreenElement || document.webkitFullscreenElement || isMobileDevice())
+    isMobile || !!(document.fullscreenElement || document.webkitFullscreenElement)
   );
 
   const videoRef = useRef(null);
@@ -748,7 +747,11 @@ function ExamTake() {
   const warningCooldown = useRef(false);
   const timerRef = useRef(null);
 
-  const noFaceCountRef = useRef(0);
+  const noFaceFramesRef = useRef(0);
+  const multiFaceFramesRef = useRef(0);
+  const gazeFramesRef = useRef(0);
+  const pitchFramesRef = useRef(0);
+  const eyeFramesRef = useRef(0);
 
   const stopCameraAndExamProctoring = useCallback(() => {
     document.body.classList.remove('mobile-fullscreen-active');
@@ -871,15 +874,22 @@ function ExamTake() {
 
     const enterFS = async () => {
       document.body.classList.add('mobile-fullscreen-active');
+      if (isMobile) {
+        // iOS / Android: native fullscreen API not supported on document element.
+        // Use viewport-lock CSS class only — isFullscreen is already true.
+        setIsFullscreen(true);
+        return;
+      }
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         try {
           const el = document.documentElement;
-          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
           if (rfs) await rfs.call(el);
-        } catch { }
+          setIsFullscreen(true);
+        } catch { setIsFullscreen(true); }
       }
     };
-    setTimeout(enterFS, 300);
+    setTimeout(enterFS, 200);
 
     return () => {
       document.body.classList.remove('mobile-fullscreen-active');
@@ -903,7 +913,7 @@ function ExamTake() {
     loadModels();
   }, []);
 
-  // AI Face & High Security Phone Photo & Eye Gaze Detection Loop (High-Precision 800ms)
+  // AI Face, Head Pose, Eye Gaze & Phone Photo Detection (Interval: 1000ms, 3-frame persistence buffer)
   useEffect(() => {
     if (!faceApiReady || !isFullscreen) return; // Pause proctoring when exam is frozen
     const interval = setInterval(async () => {
@@ -914,17 +924,37 @@ function ExamTake() {
         const detections = await faceapi.detectAllFaces(videoRef.current, opts).withFaceLandmarks(true);
 
         if (detections.length === 0) {
-          noFaceCountRef.current += 1;
-          if (noFaceCountRef.current >= 1) {
+          noFaceFramesRef.current += 1;
+          gazeFramesRef.current = 0;
+          pitchFramesRef.current = 0;
+          eyeFramesRef.current = 0;
+          multiFaceFramesRef.current = 0;
+
+          if (noFaceFramesRef.current >= 3) {
             triggerWarning('📷 Face Not Detected / Camera Blocked! Stay centered in front of camera.');
+            noFaceFramesRef.current = 0;
           }
         } else if (detections.length > 1) {
-          noFaceCountRef.current = 0;
-          triggerWarning('⚠️ Multiple Persons / Secondary Device Detected in Camera!');
+          multiFaceFramesRef.current += 1;
+          noFaceFramesRef.current = 0;
+          gazeFramesRef.current = 0;
+          pitchFramesRef.current = 0;
+          eyeFramesRef.current = 0;
+
+          if (multiFaceFramesRef.current >= 2) {
+            triggerWarning('⚠️ Multiple Persons / Secondary Device Detected in Camera!');
+            multiFaceFramesRef.current = 0;
+          }
         } else {
-          noFaceCountRef.current = 0;
-          const landmarks = detections[0].landmarks;
-          if (landmarks) {
+          noFaceFramesRef.current = 0;
+          multiFaceFramesRef.current = 0;
+
+          const detection = detections[0];
+          const landmarks = detection.landmarks;
+          const box = detection.detection?.box;
+          const faceWidth = box ? box.width : 160;
+
+          if (landmarks && faceWidth > 0) {
             const nose = landmarks.getNose();
             const leftEye = landmarks.getLeftEye();
             const rightEye = landmarks.getRightEye();
@@ -934,31 +964,58 @@ function ExamTake() {
             const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
             const noseX = nose[3].x;
             const noseY = nose[3].y;
-            const jawWidth = Math.abs(jaw[16].x - jaw[0].x);
             const jawY = jaw[8].y;
 
-            // Horizontal gaze shift (looking away left/right at phone or second screen)
-            const gazeOffset = Math.abs(eyeCenterX - noseX) / (jawWidth || 1);
+            // 1. Horizontal Gaze / Head Turn (Normalized to Face Width)
+            const gazeOffset = Math.abs(eyeCenterX - noseX) / faceWidth;
 
-            // Vertical pitch ratio (looking down at phone in hand/lap to write or take photo)
+            // 2. Vertical Pitch / Head Tilt Down (Looking down at phone in lap)
             const noseToEye = Math.abs(noseY - eyeCenterY);
             const jawToNose = Math.abs(jawY - noseY);
             const pitchRatio = noseToEye / (jawToNose || 1);
 
+            // 3. Eye Height (Normalized to Face Width)
             const leftH = Math.max(...leftEye.map(p => p.y)) - Math.min(...leftEye.map(p => p.y));
             const rightH = Math.max(...rightEye.map(p => p.y)) - Math.min(...rightEye.map(p => p.y));
+            const maxEyeH = Math.max(leftH, rightH);
+            const normEyeH = maxEyeH / faceWidth;
 
-            if (gazeOffset > 0.11) {
-              triggerWarning('👀 Eye Gaze Shift: Looking away from exam screen!');
-            } else if (pitchRatio < 0.48 || pitchRatio > 1.55) {
-              triggerWarning('📱 Head Tilted Down: Looking down at mobile phone / paper!');
-            } else if (leftH < 2.2 && rightH < 2.2) {
-              triggerWarning('👁️ Eye Distraction: Eyes closed or looking down at phone screen!');
+            // Evaluate Gaze Shift (Looking away left/right at phone or secondary screen)
+            if (gazeOffset > 0.17) {
+              gazeFramesRef.current += 1;
+              if (gazeFramesRef.current >= 3) {
+                triggerWarning('👀 Eye Gaze Shift: Looking away from exam screen!');
+                gazeFramesRef.current = 0;
+              }
+            } else {
+              gazeFramesRef.current = 0;
+            }
+
+            // Evaluate Head Tilt Down (Looking down at mobile phone / paper)
+            if (pitchRatio < 0.28 || pitchRatio > 1.75) {
+              pitchFramesRef.current += 1;
+              if (pitchFramesRef.current >= 3) {
+                triggerWarning('📱 Head Tilted Down: Looking down at mobile phone / paper!');
+                pitchFramesRef.current = 0;
+              }
+            } else {
+              pitchFramesRef.current = 0;
+            }
+
+            // Evaluate Eye Distraction / Closed Eyes
+            if (normEyeH < 0.022) {
+              eyeFramesRef.current += 1;
+              if (eyeFramesRef.current >= 4) {
+                triggerWarning('👁️ Eye Distraction: Eyes closed or looking down at phone screen!');
+                eyeFramesRef.current = 0;
+              }
+            } else {
+              eyeFramesRef.current = 0;
             }
           }
         }
       } catch { }
-    }, 800);
+    }, 1000);
     return () => clearInterval(interval);
   }, [faceApiReady, isFullscreen, triggerWarning]);
 
@@ -970,7 +1027,8 @@ function ExamTake() {
       }
     };
     const onFS = () => {
-      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || isMobileDevice());
+      if (isMobile) return; // Mobile never loses fullscreen via this event
+      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
       setIsFullscreen(inFS);
       if (!inFS && !terminatedRef.current) {
         triggerWarning('Fullscreen exited! Exam timer and questions are now FROZEN.');
@@ -1022,12 +1080,18 @@ function ExamTake() {
   const resumeFullscreen = async () => {
     document.body.classList.add('mobile-fullscreen-active');
     setIsFullscreen(true);
+    if (isMobile) {
+      toast.success('📱 Mobile exam view active. Timer resumed.');
+      return;
+    }
     try {
       const el = document.documentElement;
       const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
       if (rfs) await rfs.call(el);
-    } catch { }
-    toast.success('Exam view active');
+      toast.success('Fullscreen resumed. Timer active.');
+    } catch {
+      toast.success('Exam view active. Timer resumed.');
+    }
   };
 
   const fmtTime = () => {

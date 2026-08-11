@@ -1,7 +1,7 @@
 const nodemailer = require('nodemailer');
 
-const createTransporter = () => {
-  const port = parseInt(process.env.EMAIL_PORT || '465');
+const createTransporter = (portOverride = null) => {
+  const port = portOverride || parseInt(process.env.EMAIL_PORT || '465');
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port,
@@ -10,107 +10,154 @@ const createTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 };
 
 let fallbackTransporter = null;
 
-const sendEmail = async ({ to, subject, html }) => {
+const sendEmail = async ({ to, subject, text, html }) => {
+  const senderAddress = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
   const mailOptions = {
-    from: `"ExamPlatform" <${process.env.EMAIL_USER || 'no-reply@examplatform.com'}>`,
+    from: `"DevPhoenix Technologies LLP" <${senderAddress}>`,
     to,
     subject,
+    text,
     html,
+    headers: {
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      'Importance': 'High',
+    },
   };
 
+  // Try Port 465 SSL first
   try {
-    const transporter = createTransporter();
+    const transporter = createTransporter(465);
     const info = await transporter.sendMail(mailOptions);
-    console.log(`📧 [REAL EMAIL SENT] Delivered to ${to} (MessageId: ${info.messageId})`);
+    console.log(`📧 [REAL EMAIL SENT via Port 465] Delivered to ${to} (MessageId: ${info.messageId})`);
     return info;
   } catch (primaryErr) {
-    console.error(`⚠️ [PRIMARY SMTP ERROR]: ${primaryErr.message}`);
-    console.log(`🔄 Attempting Ethereal test mail fallback...`);
+    console.error(`⚠️ [Port 465 SSL failed]: ${primaryErr.message}`);
 
+    // Try Port 587 STARTTLS as secondary
     try {
-      if (!fallbackTransporter) {
-        const testAccount = await nodemailer.createTestAccount();
-        fallbackTransporter = nodemailer.createTransport({
-          host: 'smtp.ethereal.email',
-          port: 587,
-          secure: false,
-          auth: {
-            user: testAccount.user,
-            pass: testAccount.pass,
-          },
-        });
-      }
+      console.log(`🔄 Attempting Port 587 STARTTLS failover...`);
+      const secondaryTransporter = createTransporter(587);
+      const secondaryInfo = await secondaryTransporter.sendMail(mailOptions);
+      console.log(`📧 [REAL EMAIL SENT via Port 587] Delivered to ${to} (MessageId: ${secondaryInfo.messageId})`);
+      return secondaryInfo;
+    } catch (secondaryErr) {
+      console.error(`⚠️ [Port 587 STARTTLS failed]: ${secondaryErr.message}`);
+      console.log(`🔄 Attempting Ethereal test mail fallback...`);
 
-      const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
-      const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
-      console.log(`✅ [TEST EMAIL SENT] Delivered via Ethereal Mail!`);
-      console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
-      return fallbackInfo;
-    } catch (fallbackErr) {
-      console.error(`❌ [FALLBACK ERROR]: ${fallbackErr.message}`);
-      throw primaryErr;
+      try {
+        if (!fallbackTransporter) {
+          const testAccount = await nodemailer.createTestAccount();
+          fallbackTransporter = nodemailer.createTransport({
+            host: 'smtp.ethereal.email',
+            port: 587,
+            secure: false,
+            auth: {
+              user: testAccount.user,
+              pass: testAccount.pass,
+            },
+          });
+        }
+
+        const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
+        const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
+        console.log(`✅ [TEST EMAIL SENT] Delivered via Ethereal Mail!`);
+        console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
+        return fallbackInfo;
+      } catch (fallbackErr) {
+        console.error(`❌ [ALL EMAIL TRANSPORTS FAILED]: ${fallbackErr.message}`);
+        throw primaryErr;
+      }
     }
   }
 };
 
 const sendOTPEmail = async (email, name, otp, type = 'verification') => {
   const subjects = {
-    verification: 'Verify Your Email — ExamPlatform',
-    forgot: 'Password Reset OTP — ExamPlatform',
+    verification: '🔒 OTP Verification — DevPhoenix Technologies LLP AI-Assessment',
+    forgot: '🔑 Password Reset Code — DevPhoenix Technologies LLP',
   };
 
   const titles = {
-    verification: 'Email Verification',
-    forgot: 'Password Reset',
+    verification: 'Email Verification OTP',
+    forgot: 'Password Reset Verification',
   };
+
+  const plainText = `Hi ${name},\n\nYour One-Time Password (OTP) for DevPhoenix Technologies LLP AI-Assessment Platform is: ${otp}\n\nThis OTP is valid for ${process.env.OTP_EXPIRE_MINUTES || 10} minutes. Please do not share this code with anyone.\n\nRegards,\nDevPhoenix Technologies LLP Team`;
 
   const html = `
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
       <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>DevPhoenix Technologies LLP</title>
       <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f4f6fb; margin: 0; padding: 0; }
-        .container { max-width: 520px; margin: 40px auto; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
-        .header { background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 40px 32px; text-align: center; }
-        .header h1 { color: #fff; margin: 0; font-size: 24px; letter-spacing: -0.5px; }
-        .body { padding: 40px 32px; }
-        .otp-box { background: #f8f7ff; border: 2px dashed #6366f1; border-radius: 12px; padding: 24px; text-align: center; margin: 24px 0; }
-        .otp { font-size: 40px; font-weight: 700; color: #6366f1; letter-spacing: 12px; }
-        .note { color: #64748b; font-size: 14px; margin-top: 8px; }
-        .footer { background: #f8f7ff; padding: 20px 32px; text-align: center; color: #94a3b8; font-size: 12px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+        .wrapper { width: 100%; table-layout: fixed; background-color: #0f172a; padding: 40px 0; }
+        .main { max-width: 540px; margin: 0 auto; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5); }
+        .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #d946ef 100%); padding: 36px 32px; text-align: center; }
+        .header-title { color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; text-transform: uppercase; text-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .header-subtitle { color: rgba(255, 255, 255, 0.85); font-size: 13px; font-weight: 600; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase; }
+        .content { padding: 36px 32px; color: #e2e8f0; }
+        .greeting { font-size: 18px; font-weight: 600; color: #f8fafc; margin-top: 0; margin-bottom: 12px; }
+        .text { font-size: 14px; line-height: 1.6; color: #94a3b8; margin: 0 0 24px 0; }
+        .otp-container { background: #0f172a; border: 2px dashed #6366f1; border-radius: 14px; padding: 24px; text-align: center; margin: 28px 0; }
+        .otp-label { font-size: 12px; font-weight: 700; color: #818cf8; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; }
+        .otp-code { font-size: 38px; font-weight: 800; color: #38bdf8; letter-spacing: 12px; font-family: 'Courier New', Courier, monospace; margin: 0; }
+        .otp-expiry { font-size: 12px; color: #64748b; margin-top: 10px; font-weight: 500; }
+        .warning-box { background: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 6px; font-size: 12px; color: #fca5a5; margin-top: 24px; }
+        .footer { background-color: #0f172a; border-top: 1px solid #334155; padding: 24px 32px; text-align: center; }
+        .footer-text { font-size: 12px; color: #64748b; margin: 4px 0; }
+        .company-name { font-weight: 700; color: #94a3b8; }
       </style>
     </head>
     <body>
-      <div class="container">
-        <div class="header">
-          <h1>🎓 ExamPlatform</h1>
-        </div>
-        <div class="body">
-          <h2 style="color:#1e293b;margin-top:0;">${titles[type]}</h2>
-          <p style="color:#475569;">Hi <strong>${name}</strong>,</p>
-          <p style="color:#475569;">Your one-time password (OTP) is:</p>
-          <div class="otp-box">
-            <div class="otp">${otp}</div>
-            <div class="note">Valid for ${process.env.OTP_EXPIRE_MINUTES || 10} minutes</div>
+      <div class="wrapper">
+        <div class="main">
+          <div class="header">
+            <h1 class="header-title">DevPhoenix Technologies LLP</h1>
+            <div class="header-subtitle">AI-Assessment Examination System</div>
           </div>
-          <p style="color:#475569;">If you didn't request this, please ignore this email.</p>
+          <div class="content">
+            <h2 class="greeting">Hi ${name},</h2>
+            <p class="text">You are completing authentication for the <strong>DevPhoenix AI-Assessment Platform</strong>. Use the One-Time Password (OTP) below to verify your account.</p>
+            
+            <div class="otp-container">
+              <div class="otp-label">${titles[type]}</div>
+              <div class="otp-code">${otp}</div>
+              <div class="otp-expiry">⏱️ Valid for ${process.env.OTP_EXPIRE_MINUTES || 10} minutes</div>
+            </div>
+
+            <div class="warning-box">
+              🔒 <strong>Security Warning:</strong> Never share this OTP code with anyone. DevPhoenix administrators will never ask for your verification code.
+            </div>
+          </div>
+          <div class="footer">
+            <p class="footer-text"><span class="company-name">DevPhoenix Technologies LLP</span></p>
+            <p class="footer-text">Official AI-Assessment & Online Examination Platform</p>
+            <p class="footer-text" style="margin-top:8px;">© ${new Date().getFullYear()} DevPhoenix Technologies LLP. All rights reserved.</p>
+          </div>
         </div>
-        <div class="footer">© ${new Date().getFullYear()} ExamPlatform. All rights reserved.</div>
       </div>
     </body>
     </html>
   `;
 
-  return sendEmail({ to: email, subject: subjects[type], html });
+  return sendEmail({
+    to: email,
+    subject: subjects[type],
+    text: plainText,
+    html,
+  });
 };
 
 module.exports = { sendEmail, sendOTPEmail };

@@ -8,7 +8,7 @@ import {
   ShieldAlert, CheckCircle2, XCircle, Camera, Wifi, Maximize2,
   FileText, ArrowRight, ArrowLeft, Eye, EyeOff, Lock, Edit3,
   Layers, X, Users, LogOut, Link2, Copy, Home, AlertCircle,
-  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles
+  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles, Menu
 } from 'lucide-react';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import StudentAuthModal from './components/StudentAuthModal.jsx';
@@ -723,6 +723,11 @@ function ExamTake() {
   const navigate = useNavigate();
   const studentName = sessionStorage.getItem('dp_student');
 
+  const isMobileDevice = () => {
+    if (typeof window === 'undefined') return false;
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+  };
+
   const [questions, setQuestions] = useState([]);
   const [exam, setExam] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -732,7 +737,9 @@ function ExamTake() {
   const [warnings, setWarnings] = useState(0);
   const [warningBanner, setWarningBanner] = useState(null);
   const [faceApiReady, setFaceApiReady] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(!!(document.fullscreenElement || document.webkitFullscreenElement));
+  const [isFullscreen, setIsFullscreen] = useState(
+    !!(document.fullscreenElement || document.webkitFullscreenElement || isMobileDevice())
+  );
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -961,7 +968,7 @@ function ExamTake() {
       }
     };
     const onFS = () => {
-      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || isMobileDevice());
       setIsFullscreen(inFS);
       if (!inFS && !terminatedRef.current) {
         triggerWarning('Fullscreen exited! Exam timer and questions are now FROZEN.');
@@ -1011,12 +1018,19 @@ function ExamTake() {
   }, [exam, isFullscreen, doSubmit]);
 
   const resumeFullscreen = async () => {
+    if (isMobileDevice()) {
+      setIsFullscreen(true);
+      toast.success('Exam resumed on mobile viewport');
+      return;
+    }
     try {
       const el = document.documentElement;
-      const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+      const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
       if (rfs) await rfs.call(el);
+      setIsFullscreen(true);
     } catch {
-      toast.error('Unable to re-enter fullscreen. Check browser settings.');
+      setIsFullscreen(true);
+      toast('Full viewport active for mobile assessment', { icon: '📱' });
     }
   };
 
@@ -1588,6 +1602,7 @@ function AdminGuard({ children }) {
 function AdminDashboard() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [subjects, setSubjects] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [exams, setExams] = useState([]);
@@ -1796,12 +1811,39 @@ function AdminDashboard() {
 
       <Header adminMode onLogout={logout} />
 
+      {/* Mobile Admin Navigation Bar with Hamburger Toggle */}
+      <div className="admin-mobile-subbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(!mobileNavOpen)}
+            className="admin-hamburger-btn"
+            aria-label="Toggle Admin Navigation Menu"
+          >
+            {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+          <span className="admin-mobile-tab-name">
+            {navItems.find(n => n.key === tab)?.label || 'Dashboard'}
+          </span>
+        </div>
+        <span className="badge badge-gold" style={{ fontSize: 10, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <UserCheck size={12} /> {sessionStorage.getItem('dp_admin_name') || 'Admin'}
+        </span>
+      </div>
+
       <div className="admin-layout">
         {/* Sidebar */}
-        <nav className="admin-sidebar">
+        <nav className={`admin-sidebar ${mobileNavOpen ? 'mobile-open' : ''}`}>
           <div className="admin-sidebar-inner">
             {navItems.map(n => (
-              <button key={n.key} onClick={() => setTab(n.key)} className={`nav-item ${tab === n.key ? 'active' : ''}`}>
+              <button
+                key={n.key}
+                onClick={() => {
+                  setTab(n.key);
+                  setMobileNavOpen(false);
+                }}
+                className={`nav-item ${tab === n.key ? 'active' : ''}`}
+              >
                 <n.icon size={16} /> {n.label}
               </button>
             ))}

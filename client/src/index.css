@@ -1762,27 +1762,94 @@ tbody tr:last-child { border-bottom: none; }
     height: 38px;
   }
 
-  /* Admin Dashboard */
+  /* Admin Dashboard Mobile Navigation */
   .admin-split-grid {
     grid-template-columns: 1fr !important;
     gap: 20px;
   }
-  .admin-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
+  
+  .admin-mobile-subbar {
     display: flex;
-    overflow-x: auto;
-    padding: 12px 16px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 62px;
+    z-index: 99;
+  }
+
+  .admin-hamburger-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .admin-hamburger-btn:active {
+    transform: scale(0.95);
+    background: rgba(230, 57, 70, 0.2);
+  }
+
+  .admin-mobile-tab-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .admin-sidebar {
+    position: fixed;
+    top: 114px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(100vh - 114px);
+    background: rgba(13, 14, 18, 0.98);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    z-index: 98;
+    display: none;
+    flex-direction: column;
+    padding: 16px;
+    border-right: none;
+    border-bottom: none;
+    overflow-y: auto;
+  }
+
+  .admin-sidebar.mobile-open {
+    display: flex !important;
+    animation: slideDownNav 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes slideDownNav {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .admin-sidebar-inner {
+    padding: 0;
     gap: 8px;
-    -webkit-overflow-scrolling: touch;
   }
-  .admin-nav-item {
-    white-space: nowrap;
-    flex-shrink: 0;
+
+  .admin-sidebar-inner .nav-item {
+    padding: 14px 16px;
+    font-size: 14px;
+    border-radius: 12px;
+    justify-content: flex-start;
+    width: 100%;
   }
+
   .admin-main {
-    padding: 24px 20px;
+    padding: 20px 16px;
+    max-height: none;
   }
 }
 

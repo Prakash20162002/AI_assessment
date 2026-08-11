@@ -618,13 +618,12 @@ function SystemCheck() {
     setStarting(true);
     stopGlobalWebcamStreams();
     if (videoRef.current) videoRef.current.srcObject = null;
+    document.body.classList.add('mobile-fullscreen-active');
     try {
       const el = document.documentElement;
       const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
       if (rfs) await rfs.call(el);
-    } catch {
-      toast('Fullscreen blocked — please enable fullscreen on prompt', { icon: '⚠️', duration: 4000 });
-    }
+    } catch { }
     sessionStorage.setItem('dp_start_time', Date.now().toString());
     navigate(`/exam/${examId}/take`);
   };
@@ -752,6 +751,7 @@ function ExamTake() {
   const noFaceCountRef = useRef(0);
 
   const stopCameraAndExamProctoring = useCallback(() => {
+    document.body.classList.remove('mobile-fullscreen-active');
     if (streamRef.current) {
       try {
         streamRef.current.getTracks().forEach(t => t.stop());
@@ -815,18 +815,18 @@ function ExamTake() {
   const triggerWarning = useCallback((reason) => {
     if (terminatedRef.current || warningCooldown.current) return;
     warningCooldown.current = true;
-    setTimeout(() => { warningCooldown.current = false; }, 8000);
+    setTimeout(() => { warningCooldown.current = false; }, 2500);
 
     const newCount = warningCountRef.current + 1;
     warningCountRef.current = newCount;
     setWarnings(newCount);
     setWarningBanner({ msg: reason, count: newCount });
-    setTimeout(() => setWarningBanner(null), 6000);
+    setTimeout(() => setWarningBanner(null), 4500);
 
     if (newCount >= MAX_WARNINGS) {
-      setTimeout(() => triggerViolation(`${MAX_WARNINGS} warnings exceeded: ${reason}`), 500);
+      setTimeout(() => triggerViolation(`${MAX_WARNINGS} warnings exceeded: ${reason}`), 400);
     } else {
-      toast.error(`⚠️ Warning ${newCount}/${MAX_WARNINGS}: ${reason}`, { duration: 4500 });
+      toast.error(`🚨 PROCTORING ALERT (${newCount}/${MAX_WARNINGS}): ${reason}`, { duration: 4000, id: 'proctor-alert' });
     }
   }, [triggerViolation]);
 
@@ -870,6 +870,7 @@ function ExamTake() {
       .catch(() => { });
 
     const enterFS = async () => {
+      document.body.classList.add('mobile-fullscreen-active');
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         try {
           const el = document.documentElement;
@@ -878,9 +879,10 @@ function ExamTake() {
         } catch { }
       }
     };
-    setTimeout(enterFS, 500);
+    setTimeout(enterFS, 300);
 
     return () => {
+      document.body.classList.remove('mobile-fullscreen-active');
       stopGlobalWebcamStreams();
       if (videoRef.current) videoRef.current.srcObject = null;
     };
@@ -901,24 +903,24 @@ function ExamTake() {
     loadModels();
   }, []);
 
-  // AI Face & High Security Phone Photo Detection Loop
+  // AI Face & High Security Phone Photo & Eye Gaze Detection Loop (High-Precision 800ms)
   useEffect(() => {
     if (!faceApiReady || !isFullscreen) return; // Pause proctoring when exam is frozen
     const interval = setInterval(async () => {
       if (!videoRef.current || terminatedRef.current) return;
       try {
         const faceapi = window.faceapi;
-        const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.35 });
+        const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.25 });
         const detections = await faceapi.detectAllFaces(videoRef.current, opts).withFaceLandmarks(true);
 
         if (detections.length === 0) {
           noFaceCountRef.current += 1;
-          if (noFaceCountRef.current >= 2) {
-            triggerWarning('📱 Phone / Camera Obstruction Detected! Keep camera clear & face visible.');
+          if (noFaceCountRef.current >= 1) {
+            triggerWarning('📷 Face Not Detected / Camera Blocked! Stay centered in front of camera.');
           }
         } else if (detections.length > 1) {
           noFaceCountRef.current = 0;
-          triggerWarning('📱 Multiple Faces or Secondary Device Camera Detected!');
+          triggerWarning('⚠️ Multiple Persons / Secondary Device Detected in Camera!');
         } else {
           noFaceCountRef.current = 0;
           const landmarks = detections[0].landmarks;
@@ -935,10 +937,10 @@ function ExamTake() {
             const jawWidth = Math.abs(jaw[16].x - jaw[0].x);
             const jawY = jaw[8].y;
 
-            // Horizontal gaze shift (looking away at phone / side camera)
+            // Horizontal gaze shift (looking away left/right at phone or second screen)
             const gazeOffset = Math.abs(eyeCenterX - noseX) / (jawWidth || 1);
 
-            // Vertical pitch ratio (looking down at phone in hand/lap to take photo)
+            // Vertical pitch ratio (looking down at phone in hand/lap to write or take photo)
             const noseToEye = Math.abs(noseY - eyeCenterY);
             const jawToNose = Math.abs(jawY - noseY);
             const pitchRatio = noseToEye / (jawToNose || 1);
@@ -946,17 +948,17 @@ function ExamTake() {
             const leftH = Math.max(...leftEye.map(p => p.y)) - Math.min(...leftEye.map(p => p.y));
             const rightH = Math.max(...rightEye.map(p => p.y)) - Math.min(...rightEye.map(p => p.y));
 
-            if (gazeOffset > 0.16) {
-              triggerWarning('📱 Phone Photo Attempt: Looking away from exam screen!');
-            } else if (pitchRatio < 0.38 || pitchRatio > 1.95) {
-              triggerWarning('📱 Phone in Hand Detected: Head tilted down looking at mobile phone!');
-            } else if (leftH < 1.7 && rightH < 1.7) {
-              triggerWarning('📱 Eyes Suspiciously Shifted / Looking down at phone screen!');
+            if (gazeOffset > 0.11) {
+              triggerWarning('👀 Eye Gaze Shift: Looking away from exam screen!');
+            } else if (pitchRatio < 0.48 || pitchRatio > 1.55) {
+              triggerWarning('📱 Head Tilted Down: Looking down at mobile phone / paper!');
+            } else if (leftH < 2.2 && rightH < 2.2) {
+              triggerWarning('👁️ Eye Distraction: Eyes closed or looking down at phone screen!');
             }
           }
         }
       } catch { }
-    }, 2800);
+    }, 800);
     return () => clearInterval(interval);
   }, [faceApiReady, isFullscreen, triggerWarning]);
 
@@ -1018,20 +1020,14 @@ function ExamTake() {
   }, [exam, isFullscreen, doSubmit]);
 
   const resumeFullscreen = async () => {
-    if (isMobileDevice()) {
-      setIsFullscreen(true);
-      toast.success('Exam resumed on mobile viewport');
-      return;
-    }
+    document.body.classList.add('mobile-fullscreen-active');
+    setIsFullscreen(true);
     try {
       const el = document.documentElement;
       const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
       if (rfs) await rfs.call(el);
-      setIsFullscreen(true);
-    } catch {
-      setIsFullscreen(true);
-      toast('Full viewport active for mobile assessment', { icon: '📱' });
-    }
+    } catch { }
+    toast.success('Exam view active');
   };
 
   const fmtTime = () => {

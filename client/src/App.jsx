@@ -8,8 +8,9 @@ import {
   ShieldAlert, CheckCircle2, XCircle, Camera, Wifi, Maximize2,
   FileText, ArrowRight, ArrowLeft, Eye, EyeOff, Lock, Edit3,
   Layers, X, Users, LogOut, Link2, Copy, Home, AlertCircle,
-  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink
+  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles
 } from 'lucide-react';
+import LoadingScreen from './components/LoadingScreen.jsx';
 
 /* ═══════════════════════════════════════════════════════
    DATA LAYER  (localStorage)
@@ -89,6 +90,12 @@ function stopGlobalWebcamStreams() {
       } catch (e) {}
     });
     window._dp_active_streams.clear();
+  }
+  if (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    try {
+      const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
+      if (efs) efs.call(document).catch(() => {});
+    } catch (e) {}
   }
 }
 
@@ -200,11 +207,11 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
   const isAdminLoggedIn = sessionStorage.getItem('dp_admin') === 'true';
 
   const brandInner = (
-    <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer', gap: 10 }}>
+    <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer' }}>
       <div className="brand-logo-wrap">
         <img src="/logo.png" alt="DevPhoenix" className="header-logo-img" />
       </div>
-      <span className="badge badge-orange" style={{ fontSize: 9, padding: '3px 8px', letterSpacing: '.5px' }}>AI ASSESSMENT</span>
+      <span className="badge badge-orange badge-ai-header" style={{ fontSize: 9, padding: '3px 8px', letterSpacing: '.5px', whiteSpace: 'nowrap', flexShrink: 0 }}>AI ASSESSMENT</span>
     </div>
   );
 
@@ -403,11 +410,23 @@ function StudentLanding() {
     const found = exams.find(e => e.id === examId);
     if (!found) return;
     setExam(found);
+
+    const sName = sessionStorage.getItem('dp_student');
+    const existing = DB.results.get().find(r => r.examId === examId && (sName ? r.studentName === sName : true));
+    const submittedFlag = sName ? sessionStorage.getItem(`dp_submitted_${examId}_${sName}`) : null;
+
+    if (existing || submittedFlag) {
+      toast.error('🚫 Exam already submitted! You cannot re-attempt this exam.', { id: 'already-sub-sl' });
+      stopGlobalWebcamStreams();
+      navigate(existing ? `/thankyou/${existing.id}` : '/', { replace: true });
+      return;
+    }
+
     const subs = DB.subjects.get();
     setSubject(subs.find(s => s.id === found.subjectId));
     const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
     setQuestions(qs);
-  }, [examId]);
+  }, [examId, navigate]);
 
   const handleStart = (e) => {
     e.preventDefault();
@@ -515,6 +534,16 @@ function SystemCheck() {
 
   useEffect(() => {
     if (!studentName) { navigate(`/exam/${examId}`); return; }
+
+    const existing = DB.results.get().find(r => r.examId === examId && r.studentName === studentName);
+    const submittedFlag = sessionStorage.getItem(`dp_submitted_${examId}_${studentName}`);
+    if (existing || submittedFlag) {
+      toast.error('🚫 Exam already submitted! You cannot re-attempt this exam.', { id: 'already-sub-sc' });
+      stopGlobalWebcamStreams();
+      navigate(existing ? `/thankyou/${existing.id}` : '/', { replace: true });
+      return;
+    }
+
     const on = () => setInternet(true);
     const off = () => setInternet(false);
     window.addEventListener('online', on);
@@ -682,9 +711,21 @@ function ExamTake() {
   const warningCooldown = useRef(false);
   const timerRef = useRef(null);
 
-  // Load exam data & start webcam
+  const noFaceCountRef = useRef(0);
+
+  // Load exam data & start webcam (with Submission Guard)
   useEffect(() => {
     if (!studentName) { navigate('/'); return; }
+
+    const existing = DB.results.get().find(r => r.examId === examId && r.studentName === studentName);
+    const submittedFlag = sessionStorage.getItem(`dp_submitted_${examId}_${studentName}`);
+    if (existing || submittedFlag) {
+      toast.error('🚫 Exam already submitted! Re-entry is blocked to prevent cheating.', { id: 'already-sub-ex' });
+      stopGlobalWebcamStreams();
+      navigate(existing ? `/thankyou/${existing.id}` : '/', { replace: true });
+      return;
+    }
+
     const ex = DB.exams.get().find(e => e.id === examId);
     if (!ex) { navigate('/'); return; }
     setExam(ex);
@@ -735,22 +776,26 @@ function ExamTake() {
     loadModels();
   }, []);
 
-  // AI Face & Eye Tracking & Phone Photo Detection Loop
+  // AI Face & High Security Phone Photo Detection Loop
   useEffect(() => {
     if (!faceApiReady || !isFullscreen) return; // Pause proctoring when exam is frozen
     const interval = setInterval(async () => {
       if (!videoRef.current || terminatedRef.current) return;
       try {
         const faceapi = window.faceapi;
-        const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.4 });
+        const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.35 });
         const detections = await faceapi.detectAllFaces(videoRef.current, opts).withFaceLandmarks(true);
 
         if (detections.length === 0) {
-          triggerWarning('No face detected / Camera obstructed by phone or taking photo!');
+          noFaceCountRef.current += 1;
+          if (noFaceCountRef.current >= 2) {
+            triggerWarning('📱 Phone / Camera Obstruction Detected! Keep camera clear & face visible.');
+          }
         } else if (detections.length > 1) {
-          triggerWarning('Multiple faces or secondary phone camera detected!');
+          noFaceCountRef.current = 0;
+          triggerWarning('📱 Multiple Faces or Secondary Device Camera Detected!');
         } else {
-          // Eye tracking & Gaze Direction
+          noFaceCountRef.current = 0;
           const landmarks = detections[0].landmarks;
           if (landmarks) {
             const nose = landmarks.getNose();
@@ -759,24 +804,36 @@ function ExamTake() {
             const jaw = landmarks.getJawOutline();
 
             const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
+            const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
             const noseX = nose[3].x;
+            const noseY = nose[3].y;
             const jawWidth = Math.abs(jaw[16].x - jaw[0].x);
+            const jawY = jaw[8].y;
+
+            // Horizontal gaze shift (looking away at phone / side camera)
             const gazeOffset = Math.abs(eyeCenterX - noseX) / (jawWidth || 1);
+
+            // Vertical pitch ratio (looking down at phone in hand/lap to take photo)
+            const noseToEye = Math.abs(noseY - eyeCenterY);
+            const jawToNose = Math.abs(jawY - noseY);
+            const pitchRatio = noseToEye / (jawToNose || 1);
 
             const leftH = Math.max(...leftEye.map(p => p.y)) - Math.min(...leftEye.map(p => p.y));
             const rightH = Math.max(...rightEye.map(p => p.y)) - Math.min(...rightEye.map(p => p.y));
 
-            if (gazeOffset > 0.18) {
-              triggerWarning('Eye movement detected — Student looking away from screen / taking photo!');
-            } else if (leftH < 1.8 && rightH < 1.8) {
-              triggerWarning('Eyes not looking at screen — unusual behaviour detected!');
+            if (gazeOffset > 0.16) {
+              triggerWarning('📱 Phone Photo Attempt: Looking away from exam screen!');
+            } else if (pitchRatio < 0.38 || pitchRatio > 1.95) {
+              triggerWarning('📱 Phone in Hand Detected: Head tilted down looking at mobile phone!');
+            } else if (leftH < 1.7 && rightH < 1.7) {
+              triggerWarning('📱 Eyes Suspiciously Shifted / Looking down at phone screen!');
             }
           }
         }
       } catch {}
-    }, 3200);
+    }, 2800);
     return () => clearInterval(interval);
-  }, [faceApiReady, isFullscreen]);
+  }, [faceApiReady, isFullscreen, triggerWarning]);
 
   // Anti-cheat: tab switch & fullscreen monitoring
   useEffect(() => {
@@ -899,14 +956,20 @@ function ExamTake() {
   const doSubmit = useCallback((cheated = false, timeUp = false) => {
     if (!questions.length) return;
     const r = saveResult(cheated);
+    if (studentName && examId) {
+      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
+    }
     clearInterval(timerRef.current);
     stopCameraAndExamProctoring();
+    stopGlobalWebcamStreams();
     if (!cheated) {
       if (timeUp) toast('⏰ Time is up! Exam auto-submitted.', { duration: 3000 });
       else toast.success('✅ Exam submitted successfully!');
-      navigate(`/thankyou/${r.id}`);
+      navigate(`/thankyou/${r.id}`, { replace: true });
+    } else {
+      navigate('/cheated', { replace: true });
     }
-  }, [saveResult, navigate, questions, stopCameraAndExamProctoring]);
+  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId]);
 
   const resumeFullscreen = async () => {
     try {
@@ -1117,13 +1180,18 @@ function ThankYouPage() {
     const r = DB.results.get().find(r => r.id === resultId);
     setResult(r);
 
-    // Stop any residual webcam media streams & exit fullscreen
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      try {
-        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-        if (efs) efs.call(document).catch(() => {});
-      } catch {}
-    }
+    // Trap browser back button so user cannot return to exam page
+    window.history.pushState(null, "", window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, "", window.location.href);
+      toast.error('🚫 Exam submitted. Back button is disabled to prevent cheating.', { id: 'no-back-ty' });
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      stopGlobalWebcamStreams();
+    };
   }, [resultId]);
 
   if (!result) return (
@@ -1228,6 +1296,19 @@ function ResultPage() {
       const ex = DB.exams.get().find(e => e.id === r.examId);
       if (ex) setQuestions(DB.questions.get().filter(q => q.subjectId === ex.subjectId));
     }
+
+    // Trap browser back button
+    window.history.pushState(null, "", window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, "", window.location.href);
+      toast.error('🚫 Exam finished. Back button is disabled.', { id: 'no-back-res' });
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      stopGlobalWebcamStreams();
+    };
   }, [id]);
 
   if (!result) return <div className="center-page" style={{ minHeight: '100vh' }}><div className="spinner" /></div>;
@@ -1331,12 +1412,19 @@ function ResultPage() {
 function CheatedPage() {
   useEffect(() => {
     stopGlobalWebcamStreams();
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      try {
-        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
-        if (efs) efs.call(document).catch(() => {});
-      } catch {}
-    }
+
+    // Trap browser back button
+    window.history.pushState(null, "", window.location.href);
+    const handlePopState = () => {
+      window.history.pushState(null, "", window.location.href);
+      toast.error('🚫 Session disqualified. Back button disabled.', { id: 'no-back-ch' });
+    };
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      stopGlobalWebcamStreams();
+    };
   }, []);
 
   return (
@@ -2092,8 +2180,13 @@ function AdminDashboard() {
    ROUTER
 ═══════════════════════════════════════════════════════ */
 export default function App() {
+  const [isLoading, setIsLoading] = useState(true);
+
   return (
     <BrowserRouter>
+      {isLoading && (
+        <LoadingScreen onFinish={() => setIsLoading(false)} />
+      )}
       <Toaster
         position="top-center"
         toastOptions={{

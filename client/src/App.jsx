@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import StudentAuthModal from './components/StudentAuthModal.jsx';
+import api from './services/api';
 
 /* ═══════════════════════════════════════════════════════
    DATA LAYER  (localStorage)

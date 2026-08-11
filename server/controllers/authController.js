@@ -75,11 +75,8 @@ const register = async (req, res, next) => {
 
     return res.status(201).json({
       success: true,
-      message: emailSent
-        ? 'Registration successful. Please check your email for OTP.'
-        : `Registration successful. (Email delivery failed — use code ${otp})`,
+      message: 'Registration successful. Please check your email for OTP.',
       userId: user._id,
-      devOtp: (!emailSent || process.env.NODE_ENV === 'development') ? otp : undefined,
     });
   } catch (error) {
     next(error);
@@ -200,8 +197,7 @@ const resendOTP = async (req, res, next) => {
 
     return res.json({
       success: true,
-      message: emailSent ? 'OTP resent successfully' : `OTP resent. (Email failed — use code ${otp})`,
-      devOtp: (!emailSent || process.env.NODE_ENV === 'development') ? otp : undefined,
+      message: 'A new OTP has been sent to your email.',
     });
   } catch (error) {
     next(error);

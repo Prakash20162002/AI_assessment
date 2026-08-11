@@ -169,12 +169,8 @@ export default function StudentAuthModal({
       }
 
       setUserId(data.userId);
-      if (data.devOtp) {
-        setOtp(String(data.devOtp));
-        toast.success(`Registration successful! Verification OTP: ${data.devOtp}`, { duration: 6000 });
-      } else {
-        toast.success('Registration successful! OTP sent to your email.');
-      }
+      setOtp('');
+      toast.success(data?.message || 'Registration successful! Please check your email for the OTP.');
       setMode('otp');
     } catch (err) {
       console.error(
@@ -290,12 +286,8 @@ export default function StudentAuthModal({
         }
       );
 
-      if (data?.devOtp) {
-        setOtp(String(data.devOtp));
-        toast.success(`New OTP Code: ${data.devOtp}`, { duration: 6000 });
-      } else {
-        toast.success('A new OTP has been sent to your email.');
-      }
+      setOtp('');
+      toast.success(data?.message || 'A new OTP has been sent to your email.');
     } catch (err) {
       toast.error(
         err.response?.data?.message ||

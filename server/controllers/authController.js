@@ -58,18 +58,10 @@ const register = async (req, res, next) => {
     // Save user
     await user.save();
 
-    let emailSent = true;
-    try {
-      await sendOTPEmail(
-        user.email,
-        user.name,
-        otp,
-        'verification'
-      );
-    } catch (emailErr) {
-      emailSent = false;
-      console.error('📧 [SMTP ERROR] Email send failed:', emailErr.message);
-    }
+    // Send OTP asynchronously in background (non-blocking for instant UI response)
+    sendOTPEmail(user.email, user.name, otp, 'verification')
+      .then(() => console.log(`📧 [EMAIL SENT] OTP delivered to ${user.email}`))
+      .catch(emailErr => console.error('📧 [SMTP NOTICE] Async email dispatch error:', emailErr.message));
 
     console.log(`🔑 [OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
@@ -180,18 +172,10 @@ const resendOTP = async (req, res, next) => {
 
     await user.save();
 
-    let emailSent = true;
-    try {
-      await sendOTPEmail(
-        user.email,
-        user.name,
-        otp,
-        'verification'
-      );
-    } catch (emailErr) {
-      emailSent = false;
-      console.error('📧 [SMTP ERROR] Resend OTP failed:', emailErr.message);
-    }
+    // Send OTP asynchronously in background (non-blocking)
+    sendOTPEmail(user.email, user.name, otp, 'verification')
+      .then(() => console.log(`📧 [EMAIL SENT] Resent OTP delivered to ${user.email}`))
+      .catch(emailErr => console.error('📧 [SMTP NOTICE] Async resend email error:', emailErr.message));
 
     console.log(`🔑 [RESEND OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 

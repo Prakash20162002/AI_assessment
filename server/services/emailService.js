@@ -9,6 +9,9 @@ const createTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    connectionTimeout: 2500,
+    greetingTimeout: 2500,
+    socketTimeout: 3000,
   });
 };
 

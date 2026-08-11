@@ -1684,6 +1684,10 @@ function AdminDashboard() {
   const [filterSubId, setFilterSubId] = useState('');
   const [shareModal, setShareModal] = useState({ open: false, exam: null, subject: null });
 
+  // Subject filters for Students & Results tabs
+  const [studentFilterSubId, setStudentFilterSubId] = useState('');
+  const [resultFilterSubId, setResultFilterSubId] = useState('');
+
   // Student Edit State & Handlers
   const [editStudentId, setEditStudentId] = useState(null);
   const [editStudentName, setEditStudentName] = useState('');
@@ -2188,7 +2192,14 @@ function AdminDashboard() {
             )}
 
             {/* STUDENTS */}
-            {tab === 'students' && (
+            {tab === 'students' && (() => {
+              const filteredStudents = studentFilterSubId
+                ? students.filter(s => {
+                    const ex = exams.find(e => e.id === s.examId);
+                    return ex?.subjectId === studentFilterSubId;
+                  })
+                : students;
+              return (
               <div>
                 <div className="admin-section-head">
                   <h2 className="admin-page-title">Student List</h2>
@@ -2198,7 +2209,42 @@ function AdminDashboard() {
                     </button>
                   )}
                 </div>
-                <p className="admin-page-sub" style={{ marginBottom: 24 }}>Manage student profiles and registered assessment sessions.</p>
+                <p className="admin-page-sub" style={{ marginBottom: 16 }}>Manage student profiles and registered assessment sessions.</p>
+
+                {/* Subject Filter Bar */}
+                <div className="q-filter-bar" style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <BookOpen size={14} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', flexShrink: 0 }}>Filter by Subject:</span>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+                    <button
+                      onClick={() => setStudentFilterSubId('')}
+                      className={`btn btn-sm ${studentFilterSubId === '' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: 11, padding: '5px 14px' }}
+                    >
+                      All Subjects ({students.length})
+                    </button>
+                    {subjects.map(sub => {
+                      const count = students.filter(s => {
+                        const ex = exams.find(e => e.id === s.examId);
+                        return ex?.subjectId === sub.id;
+                      }).length;
+                      return (
+                        <button
+                          key={sub.id}
+                          onClick={() => setStudentFilterSubId(sub.id)}
+                          className={`btn btn-sm ${studentFilterSubId === sub.id ? 'btn-primary' : 'btn-secondary'}`}
+                          style={{ fontSize: 11, padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 6 }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: sub.color || 'var(--primary)', display: 'inline-block', flexShrink: 0 }} />
+                          {sub.name} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>
+                    {filteredStudents.length} student{filteredStudents.length !== 1 ? 's' : ''} shown
+                  </span>
+                </div>
 
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                   <div className="table-wrapper">
@@ -2207,16 +2253,20 @@ function AdminDashboard() {
                         <tr>
                           <th>#</th>
                           <th>Student Name</th>
+                          <th>Subject</th>
                           <th>Exam Session</th>
                           <th>Joined At</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {students.length === 0
-                          ? <tr><td colSpan={5} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>No students registered yet.</td></tr>
-                          : students.map((s, i) => {
+                        {filteredStudents.length === 0
+                          ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                              {students.length === 0 ? 'No students registered yet.' : 'No students found for this subject.'}
+                            </td></tr>
+                          : filteredStudents.map((s, i) => {
                             const ex = exams.find(e => e.id === s.examId);
+                            const sub = ex ? subjects.find(sb => sb.id === ex.subjectId) : null;
                             const isEditing = editStudentId === s.id;
                             return (
                               <tr key={s.id}>
@@ -2240,6 +2290,12 @@ function AdminDashboard() {
                                     <span style={{ color: '#fff', fontWeight: 600 }}>{s.name}</span>
                                   )}
                                 </td>
+                                <td>
+                                  {sub
+                                    ? <span className="badge badge-orange" style={{ fontSize: 10 }}>{sub.name}</span>
+                                    : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                                  }
+                                </td>
                                 <td style={{ fontSize: 12 }}>{ex?.title || s.examId}</td>
                                 <td style={{ fontSize: 11 }}>{new Date(s.joinedAt).toLocaleString()}</td>
                                 <td>
@@ -2261,10 +2317,18 @@ function AdminDashboard() {
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* RESULTS */}
-            {tab === 'results' && (
+            {tab === 'results' && (() => {
+              const filteredResults = resultFilterSubId
+                ? results.filter(r => {
+                    const ex = exams.find(e => e.id === r.examId);
+                    return ex?.subjectId === resultFilterSubId;
+                  })
+                : results;
+              return (
               <div>
                 <div className="admin-section-head">
                   <h2 className="admin-page-title">Proctor Audit Log</h2>
@@ -2280,36 +2344,85 @@ function AdminDashboard() {
                     </button>
                   )}
                 </div>
+
+                {/* Subject Filter Bar */}
+                <div className="q-filter-bar" style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <Trophy size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', flexShrink: 0 }}>Filter by Subject:</span>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+                    <button
+                      onClick={() => setResultFilterSubId('')}
+                      className={`btn btn-sm ${resultFilterSubId === '' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: 11, padding: '5px 14px' }}
+                    >
+                      All Subjects ({results.length})
+                    </button>
+                    {subjects.map(sub => {
+                      const count = results.filter(r => {
+                        const ex = exams.find(e => e.id === r.examId);
+                        return ex?.subjectId === sub.id;
+                      }).length;
+                      return (
+                        <button
+                          key={sub.id}
+                          onClick={() => setResultFilterSubId(sub.id)}
+                          className={`btn btn-sm ${resultFilterSubId === sub.id ? 'btn-primary' : 'btn-secondary'}`}
+                          style={{ fontSize: 11, padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 6 }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: sub.color || 'var(--primary)', display: 'inline-block', flexShrink: 0 }} />
+                          {sub.name} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto', flexShrink: 0 }}>
+                    {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''} shown
+                  </span>
+                </div>
+
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                   <div className="table-wrapper">
                     <table>
-                      <thead><tr><th>Student</th><th>Score</th><th>Warnings</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+                      <thead><tr><th>Student</th><th>Subject</th><th>Score</th><th>Warnings</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
                       <tbody>
-                        {results.length === 0
-                          ? <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>No submissions yet.</td></tr>
-                          : results.map(r => (
-                            <tr key={r.id}>
-                              <td style={{ color: '#fff', fontWeight: 600 }}>{r.studentName}</td>
-                              <td style={{ fontWeight: 600 }}>{r.cheated ? '—' : `${r.score}/${r.totalMarks}`}</td>
-                              <td>{r.warnings > 0 ? <span className="badge badge-orange">{r.warnings} ⚠️</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                              <td><span className={`badge ${r.cheated ? 'badge-red' : 'badge-green'}`}>{r.status}</span></td>
-                              <td style={{ fontSize: 11 }}>{r.date}</td>
-                              <td>
-                                {!r.cheated && (
-                                  <Link to={`/result/${r.id}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary-light)' }}>
-                                    View →
-                                  </Link>
-                                )}
-                              </td>
-                            </tr>
-                          ))
+                        {filteredResults.length === 0
+                          ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                              {results.length === 0 ? 'No submissions yet.' : 'No results found for this subject.'}
+                            </td></tr>
+                          : filteredResults.map(r => {
+                            const ex = exams.find(e => e.id === r.examId);
+                            const sub = ex ? subjects.find(sb => sb.id === ex.subjectId) : null;
+                            return (
+                              <tr key={r.id}>
+                                <td style={{ color: '#fff', fontWeight: 600 }}>{r.studentName}</td>
+                                <td>
+                                  {sub
+                                    ? <span className="badge badge-orange" style={{ fontSize: 10 }}>{sub.name}</span>
+                                    : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                                  }
+                                </td>
+                                <td style={{ fontWeight: 600 }}>{r.cheated ? '—' : `${r.score}/${r.totalMarks}`}</td>
+                                <td>{r.warnings > 0 ? <span className="badge badge-orange">{r.warnings} ⚠️</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                                <td><span className={`badge ${r.cheated ? 'badge-red' : 'badge-green'}`}>{r.status}</span></td>
+                                <td style={{ fontSize: 11 }}>{r.date}</td>
+                                <td>
+                                  {!r.cheated && (
+                                    <Link to={`/result/${r.id}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary-light)' }}>
+                                      View →
+                                    </Link>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         }
                       </tbody>
                     </table>
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </main>
       </div>

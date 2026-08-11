@@ -56,23 +56,31 @@ const register = async (req, res, next) => {
       });
     }
 
-    // Generate fresh OTP
-    const otp = user.generateOTP();
-
-    // Save user
-    await user.save();
+    // Check if user has a valid unexpired OTP already
+    let otp;
+    const existingUser = await User.findById(user._id).select('+otp +otpExpiry');
+    if (existingUser && existingUser.otp && existingUser.otpExpiry && existingUser.otpExpiry > new Date()) {
+      otp = existingUser.otp;
+      user.otp = otp;
+      user.otpExpiry = existingUser.otpExpiry;
+      await user.save();
+      console.log(`🔑 [REUSED ACTIVE OTP] Using existing valid OTP for ${user.email}: ${otp}`);
+    } else {
+      otp = user.generateOTP();
+      await user.save();
+      console.log(`🔑 [NEW OTP GENERATED] Verification OTP for ${user.email}: ${otp}`);
+    }
 
     // Send OTP asynchronously in background (non-blocking for instant UI response)
     sendOTPEmail(user.email, user.name, otp, 'verification')
-      .then(() => console.log(`📧 [EMAIL SENT] Fresh OTP delivered to ${user.email}`))
+      .then(() => console.log(`📧 [EMAIL SENT] OTP ${otp} delivered to ${user.email}`))
       .catch(emailErr => console.error('📧 [SMTP NOTICE] Async email dispatch error:', emailErr.message));
-
-    console.log(`🔑 [FRESH OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
     return res.status(201).json({
       success: true,
       message: 'Registration successful. A 6-digit OTP code has been sent to your email.',
       userId: user._id,
+      devOtp: otp,
     });
   } catch (error) {
     next(error);
@@ -175,20 +183,29 @@ const resendOTP = async (req, res, next) => {
       });
     }
 
-    const otp = user.generateOTP();
-
-    await user.save();
+    const existingUser = await User.findById(user._id).select('+otp +otpExpiry');
+    let otp;
+    if (existingUser && existingUser.otp && existingUser.otpExpiry && existingUser.otpExpiry > new Date()) {
+      otp = existingUser.otp;
+      user.otp = otp;
+      user.otpExpiry = existingUser.otpExpiry;
+      await user.save();
+      console.log(`🔑 [RESEND REUSED ACTIVE OTP] Using existing valid OTP for ${user.email}: ${otp}`);
+    } else {
+      otp = user.generateOTP();
+      await user.save();
+      console.log(`🔑 [RESEND NEW OTP] Generated new OTP for ${user.email}: ${otp}`);
+    }
 
     // Send OTP asynchronously in background (non-blocking)
     sendOTPEmail(user.email, user.name, otp, 'verification')
-      .then(() => console.log(`📧 [EMAIL SENT] Resent OTP delivered to ${user.email}`))
+      .then(() => console.log(`📧 [EMAIL SENT] Resent OTP ${otp} delivered to ${user.email}`))
       .catch(emailErr => console.error('📧 [SMTP NOTICE] Async resend email error:', emailErr.message));
-
-    console.log(`🔑 [RESEND OTP CODE] Verification OTP for ${user.email}: ${otp}`);
 
     return res.json({
       success: true,
-      message: 'A new OTP has been sent to your email.',
+      message: 'OTP sent to your email. Please check your inbox.',
+      devOtp: otp,
     });
   } catch (error) {
     next(error);

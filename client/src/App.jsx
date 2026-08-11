@@ -905,7 +905,7 @@ function ExamTake() {
         if (data?.data?.length > 0) {
           const formatted = data.data.map((q) => ({
             id: q._id,
-            subjectId: ex?.subjectId || 's1',
+            subjectId: exam?.subjectId || 's1',
             questionText: q.questionText,
             options: q.options,
             correctAnswer: q.correctAnswer,
@@ -916,7 +916,7 @@ function ExamTake() {
         }
       })
       .catch(() => {});
-  }, [examId, ex?.subjectId]);
+  }, [examId, exam?.subjectId]);
 
   // Initial Fullscreen Check
   useEffect(() => {

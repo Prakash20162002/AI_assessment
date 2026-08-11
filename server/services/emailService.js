@@ -82,8 +82,8 @@ const sendEmail = async ({ to, subject, text, html }) => {
 
 const sendOTPEmail = async (email, name, otp, type = 'verification') => {
   const subjects = {
-    verification: '🔒 OTP Verification — DevPhoenix Technologies LLP AI-Assessment',
-    forgot: '🔑 Password Reset Code — DevPhoenix Technologies LLP',
+    verification: `🔒 Code: ${otp} — OTP Verification DevPhoenix Technologies LLP`,
+    forgot: `🔑 Code: ${otp} — Password Reset DevPhoenix Technologies LLP`,
   };
 
   const titles = {

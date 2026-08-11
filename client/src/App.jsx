@@ -857,6 +857,9 @@ function ExamTake() {
     if (!qs || qs.length === 0) {
       qs = DB.questions.get();
     }
+    if (!qs || qs.length === 0) {
+      qs = SEED.questions;
+    }
     setQuestions(qs);
 
     stopGlobalWebcamStreams();
@@ -871,19 +874,34 @@ function ExamTake() {
 
     const mountTimeRef = useRef(Date.now());
 
-    // Auto-request fullscreen on exam start
+    // Sync questions from backend API if available
     useEffect(() => {
-      const enterFS = async () => {
-        if (isMobile) return;
-        try {
-          const el = document.documentElement;
-          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-          if (rfs && !document.fullscreenElement) {
-            await rfs.call(el);
+      if (!examId) return;
+      api.get(`/admin/exams/${examId}/questions`)
+        .then(({ data }) => {
+          if (data?.data?.length > 0) {
+            const formatted = data.data.map((q) => ({
+              id: q._id,
+              subjectId: ex?.subjectId || 's1',
+              questionText: q.questionText,
+              options: q.options,
+              correctAnswer: q.correctAnswer,
+              marks: q.marks || 5,
+              explanation: q.explanation || '',
+            }));
+            setQuestions(formatted);
           }
-        } catch { }
-      };
-      enterFS();
+        })
+        .catch(() => {});
+    }, [examId, ex?.subjectId]);
+
+    // Initial Fullscreen Check
+    useEffect(() => {
+      if (isMobile) return;
+      const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+      if (!inFS) {
+        setIsFullscreen(false);
+      }
     }, []);
 
     const enterFS = async () => {

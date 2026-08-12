@@ -280,18 +280,49 @@ const getAllResults = async (req, res, next) => {
     let resultsQuery = Result.find(query)
       .populate('studentId', 'name email')
       .populate('examId', 'title duration passingMarks')
+      .populate('sessionId', 'warningCount status startedAt submittedAt')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
     const [results, total] = await Promise.all([resultsQuery, Result.countDocuments(query)]);
 
+    // Attach integrity status indicator based on warning count & cheating logs
+    const enhancedResults = await Promise.all(
+      results.map(async (resObj) => {
+        const r = resObj.toObject();
+        const logsCount = await CheatingLog.countDocuments({
+          studentId: r.studentId?._id,
+          examId: r.examId?._id,
+        });
+
+        const warningCount = r.sessionId?.warningCount || 0;
+        const sessionStatus = r.sessionId?.status || 'submitted';
+
+        let integrityStatus = 'Normal';
+        if (sessionStatus === 'voided' || warningCount >= 3) {
+          integrityStatus = 'Flagged';
+        } else if (warningCount === 2 || logsCount >= 3) {
+          integrityStatus = 'Suspicious';
+        } else if (warningCount === 1 || logsCount >= 1) {
+          integrityStatus = 'Warning';
+        }
+
+        return {
+          ...r,
+          violationCount: warningCount,
+          cheatingLogsCount: logsCount,
+          integrityStatus,
+        };
+      })
+    );
+
     res.json({
       success: true,
-      count: results.length,
+      count: enhancedResults.length,
       total,
       pages: Math.ceil(total / parseInt(limit)),
-      data: results,
+      data: enhancedResults,
     });
   } catch (error) {
     next(error);

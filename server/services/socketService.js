@@ -236,16 +236,19 @@ const initSocketService = (io) => {
 
 const getWarningMessage = (type) => {
   const messages = {
-    'tab-switch': 'You switched away from the exam tab',
-    'fullscreen-exit': 'You exited fullscreen mode',
+    'tab-switch': 'Browser tab switch detected',
+    'window-blur': 'Leaving assessment window detected',
+    'window-focus': 'Returned to assessment window',
+    'fullscreen-exit': 'Exited fullscreen mode',
     refresh: 'Page refresh detected',
     'browser-close': 'Browser close attempt detected',
     'camera-off': 'Camera was turned off',
     'internet-lost': 'Internet connection lost',
-    'copy-paste': 'Copy/paste detected',
-    'right-click': 'Right-click detected',
+    'copy-paste': 'Copy/paste attempt detected',
+    'right-click': 'Right-click attempt detected',
+    'suspicious-activity': 'Suspicious assessment activity detected',
   };
-  return messages[type] || 'Suspicious activity detected';
+  return messages[type] || 'Security warning detected';
 };
 
 module.exports = initSocketService;

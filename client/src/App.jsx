@@ -2026,9 +2026,6 @@ function AdminDashboard() {
             {navItems.find(n => n.key === tab)?.label || 'Dashboard'}
           </span>
         </div>
-        <span className="badge badge-gold" style={{ fontSize: 10, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <UserCheck size={12} /> {sessionStorage.getItem('dp_admin_name') || 'Admin'}
-        </span>
       </div>
 
       <div className="admin-layout">

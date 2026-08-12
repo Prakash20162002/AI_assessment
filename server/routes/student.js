@@ -6,6 +6,7 @@ const {
   startExam,
   saveAnswer,
   submitExam,
+  logCheatEvent,
   getMyResults,
   getResultDetail,
 } = require('../controllers/studentController');
@@ -17,6 +18,7 @@ router.get('/exams', getAvailableExams);
 router.post('/exams/:id/start', startExam);
 router.post('/exams/:id/save-answer', saveAnswer);
 router.post('/exams/:id/submit', submitExam);
+router.post('/cheat/log', logCheatEvent);
 router.get('/results', getMyResults);
 router.get('/results/:id', getResultDetail);
 

@@ -175,7 +175,7 @@ const ExamPage = () => {
   const answeredCount = Object.keys(answers).length;
 
   return (
-    <div className="min-h-screen flex flex-col page-enter" style={{ background: 'var(--bg-dark)' }}>
+    <div className="min-h-screen flex flex-col page-enter select-none" style={{ background: 'var(--bg-dark)', userSelect: 'none', WebkitUserSelect: 'none' }}>
       {/* Top Navbar */}
       <div className="h-16 flex items-center justify-between px-6" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-4">

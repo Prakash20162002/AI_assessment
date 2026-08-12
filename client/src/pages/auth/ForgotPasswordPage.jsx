@@ -19,7 +19,11 @@ const ForgotPasswordPage = () => {
     try {
       const { data } = await api.post('/auth/forgot-password', { email });
       setUserId(data.userId || '');
-      toast.success('OTP sent to your email');
+      if (data?.devOtp) {
+        toast.success(`OTP sent to email! (Reset Code: ${data.devOtp})`, { duration: 10000 });
+      } else {
+        toast.success('OTP sent to your email');
+      }
       setStep(2);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to send OTP');
@@ -36,7 +40,7 @@ const ForgotPasswordPage = () => {
     }
     setLoading(true);
     try {
-      await api.post('/auth/reset-password', { userId, otp, newPassword });
+      await api.post('/auth/reset-password', { userId, email, otp, newPassword });
       toast.success('Password reset successfully!');
       navigate('/login');
     } catch (err) {

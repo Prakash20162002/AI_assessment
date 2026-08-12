@@ -1,22 +1,43 @@
 const nodemailer = require('nodemailer');
 
-const createTransporter = (portOverride = null) => {
-  const port = portOverride || parseInt(process.env.EMAIL_PORT || '465');
-  return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port,
-    secure: port === 465,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
+// Singleton cached transporters
+const transporters = new Map();
+
+const getTransporter = (portOverride = null) => {
+  const configuredPort = parseInt(process.env.EMAIL_PORT || '465', 10);
+  const port = portOverride || configuredPort;
+  const key = `smtp_${port}`;
+
+  if (!transporters.has(key)) {
+    const isSecure = port === 465;
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port,
+      secure: isSecure,
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 5000,
+    });
+    transporters.set(key, transporter);
+  }
+
+  return transporters.get(key);
 };
 
 let fallbackTransporter = null;
+
+const maskEmail = (email) => {
+  if (!email || !email.includes('@')) return '***@***';
+  const [user, domain] = email.split('@');
+  return `${user.substring(0, 2)}***@${domain}`;
+};
 
 const sendEmail = async ({ to, subject, text, html }) => {
   const senderAddress = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
@@ -33,48 +54,55 @@ const sendEmail = async ({ to, subject, text, html }) => {
     },
   };
 
-  // Try Port 465 SSL first
+  const configuredPort = parseInt(process.env.EMAIL_PORT || '465', 10);
+  const primaryTransporter = getTransporter(configuredPort);
+
   try {
-    const transporter = createTransporter(465);
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`📧 [REAL EMAIL SENT via Port 465] Delivered to ${to} (MessageId: ${info.messageId})`);
-    return info;
+    const info = await primaryTransporter.sendMail(mailOptions);
+    console.log(`📧 [EMAIL DELIVERED] Primary Port ${configuredPort} -> ${maskEmail(to)} (ID: ${info.messageId})`);
+    return { success: true, messageId: info.messageId };
   } catch (primaryErr) {
-    console.error(`⚠️ [Port 465 SSL failed]: ${primaryErr.message}`);
+    console.error(`⚠️ [Primary SMTP Port ${configuredPort} failed]: ${primaryErr.message}`);
 
-    // Try Port 587 STARTTLS as secondary
+    // Try secondary port failover (587 if primary was 465, or 465 if primary was 587)
+    const secondaryPort = configuredPort === 465 ? 587 : 465;
     try {
-      console.log(`🔄 Attempting Port 587 STARTTLS failover...`);
-      const secondaryTransporter = createTransporter(587);
+      console.log(`🔄 Attempting Port ${secondaryPort} failover...`);
+      const secondaryTransporter = getTransporter(secondaryPort);
       const secondaryInfo = await secondaryTransporter.sendMail(mailOptions);
-      console.log(`📧 [REAL EMAIL SENT via Port 587] Delivered to ${to} (MessageId: ${secondaryInfo.messageId})`);
-      return secondaryInfo;
+      console.log(`📧 [EMAIL DELIVERED] Failover Port ${secondaryPort} -> ${maskEmail(to)} (ID: ${secondaryInfo.messageId})`);
+      return { success: true, messageId: secondaryInfo.messageId };
     } catch (secondaryErr) {
-      console.error(`⚠️ [Port 587 STARTTLS failed]: ${secondaryErr.message}`);
-      console.log(`🔄 Attempting Ethereal test mail fallback...`);
+      console.error(`⚠️ [Failover SMTP Port ${secondaryPort} failed]: ${secondaryErr.message}`);
 
-      try {
-        if (!fallbackTransporter) {
-          const testAccount = await nodemailer.createTestAccount();
-          fallbackTransporter = nodemailer.createTransport({
-            host: 'smtp.ethereal.email',
-            port: 587,
-            secure: false,
-            auth: {
-              user: testAccount.user,
-              pass: testAccount.pass,
-            },
-          });
+      // In development, attempt Ethereal test mail fallback
+      if (process.env.NODE_ENV !== 'production') {
+        try {
+          console.log(`🔄 Attempting Ethereal test mail fallback...`);
+          if (!fallbackTransporter) {
+            const testAccount = await nodemailer.createTestAccount();
+            fallbackTransporter = nodemailer.createTransport({
+              host: 'smtp.ethereal.email',
+              port: 587,
+              secure: false,
+              auth: {
+                user: testAccount.user,
+                pass: testAccount.pass,
+              },
+            });
+          }
+
+          const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
+          const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
+          console.log(`✅ [DEV TEST EMAIL SENT] Delivered via Ethereal Mail to ${maskEmail(to)}`);
+          console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
+          return { success: true, messageId: fallbackInfo.messageId, previewUrl };
+        } catch (fallbackErr) {
+          console.error(`❌ [ALL EMAIL TRANSPORTS FAILED]: ${fallbackErr.message}`);
+          throw new Error(`Email delivery failed: ${primaryErr.message}`);
         }
-
-        const fallbackInfo = await fallbackTransporter.sendMail(mailOptions);
-        const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
-        console.log(`✅ [TEST EMAIL SENT] Delivered via Ethereal Mail!`);
-        console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
-        return fallbackInfo;
-      } catch (fallbackErr) {
-        console.error(`❌ [ALL EMAIL TRANSPORTS FAILED]: ${fallbackErr.message}`);
-        throw primaryErr;
+      } else {
+        throw new Error(`Email delivery failed: ${primaryErr.message}`);
       }
     }
   }

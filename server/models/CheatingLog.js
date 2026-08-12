@@ -24,6 +24,8 @@ const cheatingLogSchema = new mongoose.Schema(
       required: true,
       enum: [
         'tab-switch',
+        'window-blur',
+        'window-focus',
         'fullscreen-exit',
         'refresh',
         'browser-close',
@@ -33,6 +35,10 @@ const cheatingLogSchema = new mongoose.Schema(
         'no-face',
         'copy-paste',
         'right-click',
+        'suspicious-activity',
+        'assessment-started',
+        'assessment-submitted',
+        'time-expired',
       ],
     },
     details: {

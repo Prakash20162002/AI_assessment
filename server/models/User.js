@@ -40,6 +40,15 @@ const userSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+    otpAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+    otpLastSent: {
+      type: Date,
+      select: false,
+    },
     profileImage: {
       type: String,
       default: null,
@@ -63,12 +72,33 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Generate OTP
+// Cryptographically secure 6-digit OTP generation with SHA-256 hashed storage
 userSchema.methods.generateOTP = function () {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  this.otp = otp;
-  this.otpExpiry = new Date(Date.now() + parseInt(process.env.OTP_EXPIRE_MINUTES || 10) * 60 * 1000);
-  return otp;
+  const crypto = require('crypto');
+  // Generate random integer between 0 and 999999, format as 6-digit string (preserves leading zeros)
+  const rawOtp = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+  
+  // Store SHA-256 hash in database
+  this.otp = crypto.createHash('sha256').update(rawOtp).digest('hex');
+  this.otpExpiry = new Date(Date.now() + parseInt(process.env.OTP_EXPIRE_MINUTES || '10', 10) * 60 * 1000);
+  this.otpAttempts = 0;
+  this.otpLastSent = new Date();
+
+  return rawOtp;
+};
+
+// Timing-safe verification of entered OTP against stored SHA-256 hash
+userSchema.methods.verifyOTPCode = function (enteredOtp) {
+  if (!this.otp || !enteredOtp) return false;
+  const crypto = require('crypto');
+  const cleanEntered = enteredOtp.toString().trim();
+  const enteredHash = crypto.createHash('sha256').update(cleanEntered).digest('hex');
+
+  const storedHashBuf = Buffer.from(this.otp, 'hex');
+  const enteredHashBuf = Buffer.from(enteredHash, 'hex');
+
+  if (storedHashBuf.length !== enteredHashBuf.length) return false;
+  return crypto.timingSafeEqual(storedHashBuf, enteredHashBuf);
 };
 
 module.exports = mongoose.model('User', userSchema);

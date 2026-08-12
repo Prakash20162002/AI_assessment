@@ -203,7 +203,7 @@ export default function StudentAuthModal({
 
     const cleanOtp = otp.trim();
 
-    if (!cleanOtp || !userId) {
+    if (!cleanOtp || (!userId && !email)) {
       toast.error(
         'Please enter the 6-digit OTP code'
       );
@@ -224,6 +224,7 @@ export default function StudentAuthModal({
         '/auth/verify-otp',
         {
           userId,
+          email,
           otp: cleanOtp,
         }
       );
@@ -278,7 +279,7 @@ export default function StudentAuthModal({
   // RESEND OTP
   // ============================================================
   const handleResendOTP = async () => {
-    if (!userId) return;
+    if (!userId && !email) return;
 
     setLoading(true);
 
@@ -287,6 +288,7 @@ export default function StudentAuthModal({
         '/auth/resend-otp',
         {
           userId,
+          email,
         }
       );
 

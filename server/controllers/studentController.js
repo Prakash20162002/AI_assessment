@@ -12,22 +12,25 @@ const getAvailableExams = async (req, res, next) => {
       .select('title description duration totalMarks passingMarks startTime endTime questionCount')
       .sort({ createdAt: -1 });
 
-    // Get student's session statuses for these exams
     const examIds = exams.map((e) => e._id);
     const sessions = await ExamSession.find({
       studentId: req.user._id,
       examId: { $in: examIds },
-    }).select('examId status');
+    }).select('examId status warningCount');
 
     const sessionMap = {};
     sessions.forEach((s) => {
-      sessionMap[s.examId.toString()] = s.status;
+      sessionMap[s.examId.toString()] = { status: s.status, warningCount: s.warningCount };
     });
 
-    const examsWithStatus = exams.map((exam) => ({
-      ...exam.toObject(),
-      sessionStatus: sessionMap[exam._id.toString()] || 'not-started',
-    }));
+    const examsWithStatus = exams.map((exam) => {
+      const sess = sessionMap[exam._id.toString()] || { status: 'not-started', warningCount: 0 };
+      return {
+        ...exam.toObject(),
+        sessionStatus: sess.status,
+        warningCount: sess.warningCount,
+      };
+    });
 
     res.json({ success: true, count: examsWithStatus.length, data: examsWithStatus });
   } catch (error) {
@@ -44,34 +47,41 @@ const startExam = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Exam not found or not published' });
     }
 
-    // Check time window if set
     const now = new Date();
     if (exam.startTime && now < exam.startTime) {
       return res.status(400).json({ success: false, message: 'Exam has not started yet' });
     }
     if (exam.endTime && now > exam.endTime) {
-      return res.status(400).json({ success: false, message: 'Exam has ended' });
+      return res.status(400).json({ success: false, message: 'Exam period has ended' });
     }
 
     let session = await ExamSession.findOne({ studentId: req.user._id, examId: exam._id });
 
     if (session) {
       if (session.status === 'submitted' || session.status === 'timeout') {
-        return res.status(400).json({ success: false, message: 'You have already submitted this exam' });
+        return res.status(400).json({ success: false, message: 'You have already submitted this assessment' });
       }
       if (session.status === 'voided') {
-        return res.status(400).json({ success: false, message: 'Your session was voided due to cheating violations' });
+        return res.status(400).json({ success: false, message: 'Your assessment session was voided due to security violations' });
       }
       if (session.status === 'ongoing' && !exam.allowResume) {
-        return res.status(400).json({ success: false, message: 'Resume is not allowed for this exam' });
+        return res.status(400).json({ success: false, message: 'Resuming is disabled for this assessment' });
       }
 
-      // Resume existing session
+      // Check if time expired on server
+      const elapsedSeconds = session.startedAt ? Math.floor((now - session.startedAt) / 1000) : 0;
+      const totalAllowed = exam.duration * 60;
+      if (elapsedSeconds > totalAllowed + 30) {
+        session.status = 'timeout';
+        await session.save();
+        return res.status(400).json({ success: false, message: 'Assessment duration has expired' });
+      }
+
       session.status = 'ongoing';
       session.lastActive = new Date();
       await session.save();
     } else {
-      // Get questions and optionally shuffle
+      // Get questions & order
       const questions = await Question.find({ examId: exam._id }).sort({ order: 1 }).select('_id');
       let questionOrder = questions.map((q) => q._id);
 
@@ -88,19 +98,33 @@ const startExam = async (req, res, next) => {
         questionOrder,
         answers: questionOrder.map((qId) => ({ questionId: qId, selectedOption: null })),
       });
+
+      // Log assessment start
+      await CheatingLog.create({
+        studentId: req.user._id,
+        examId: exam._id,
+        sessionId: session._id,
+        eventType: 'assessment-started',
+        details: `Assessment started at ${new Date().toISOString()}`,
+      });
     }
 
-    // Fetch questions in session order (without correct answer)
+    // Fetch questions in session order WITHOUT correctAnswer or explanation
     const populatedQuestions = await Question.find({
       _id: { $in: session.questionOrder },
     }).select('-correctAnswer -explanation');
 
-    // Reorder to match session order
     const questionMap = {};
     populatedQuestions.forEach((q) => {
       questionMap[q._id.toString()] = q;
     });
-    const orderedQuestions = session.questionOrder.map((id) => questionMap[id.toString()]);
+    const orderedQuestions = session.questionOrder
+      .map((id) => questionMap[id.toString()])
+      .filter(Boolean);
+
+    // Calculate server authoritative remaining time
+    const elapsedSeconds = Math.floor((now - session.startedAt) / 1000);
+    const calculatedRemaining = Math.max(0, (exam.duration * 60) - elapsedSeconds);
 
     res.json({
       success: true,
@@ -109,7 +133,7 @@ const startExam = async (req, res, next) => {
           id: session._id,
           status: session.status,
           startedAt: session.startedAt,
-          timeRemaining: session.timeRemaining,
+          timeRemaining: calculatedRemaining,
           currentQuestion: session.currentQuestion,
           warningCount: session.warningCount,
           answers: session.answers,
@@ -146,16 +170,26 @@ const saveAnswer = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Active session not found' });
     }
 
-    // Update the answer for this question
-    const answerIndex = session.answers.findIndex((a) => a.questionId.toString() === questionId);
+    const exam = await Exam.findById(req.params.id).select('duration');
+    const now = new Date();
+    const elapsedSeconds = session.startedAt ? Math.floor((now - session.startedAt) / 1000) : 0;
+    const allowedDuration = (exam?.duration || 10) * 60;
 
+    // Time cutoff enforcement (with 30s network buffer)
+    if (elapsedSeconds > allowedDuration + 30) {
+      session.status = 'timeout';
+      await session.save();
+      return res.status(400).json({ success: false, message: 'Assessment duration expired' });
+    }
+
+    const answerIndex = session.answers.findIndex((a) => a.questionId.toString() === questionId);
     if (answerIndex !== -1) {
       session.answers[answerIndex].selectedOption = selectedOption;
       session.answers[answerIndex].savedAt = new Date();
     }
 
     session.currentQuestion = currentQuestion ?? session.currentQuestion;
-    session.timeRemaining = timeRemaining ?? session.timeRemaining;
+    session.timeRemaining = Math.max(0, allowedDuration - elapsedSeconds);
     session.lastActive = new Date();
 
     await session.save();
@@ -170,8 +204,6 @@ const saveAnswer = async (req, res, next) => {
 // @route   POST /api/student/exams/:id/submit
 const submitExam = async (req, res, next) => {
   try {
-    const { timeRemaining } = req.body;
-
     const session = await ExamSession.findOne({
       studentId: req.user._id,
       examId: req.params.id,
@@ -179,10 +211,15 @@ const submitExam = async (req, res, next) => {
     });
 
     if (!session) {
-      return res.status(404).json({ success: false, message: 'Active session not found' });
+      return res.status(404).json({ success: false, message: 'Active ongoing session not found' });
     }
 
     const exam = await Exam.findById(req.params.id);
+    const now = new Date();
+    const elapsedSeconds = session.startedAt ? Math.floor((now - session.startedAt) / 1000) : 0;
+    const allowedDuration = exam.duration * 60;
+    const isTimeout = elapsedSeconds > allowedDuration + 30;
+
     const questions = await Question.find({ _id: { $in: session.questionOrder } }).select('correctAnswer marks');
 
     const questionMap = {};
@@ -233,12 +270,11 @@ const submitExam = async (req, res, next) => {
 
     const percentage = exam.totalMarks > 0 ? (score / exam.totalMarks) * 100 : 0;
     const isPassed = score >= exam.passingMarks;
-    const timeTaken = exam.duration * 60 - (timeRemaining ?? 0);
+    const timeTaken = Math.min(elapsedSeconds, allowedDuration);
 
-    // Update session
-    session.status = 'submitted';
+    session.status = isTimeout ? 'timeout' : 'submitted';
     session.submittedAt = new Date();
-    session.timeRemaining = timeRemaining ?? 0;
+    session.timeRemaining = 0;
     await session.save();
 
     // Create result
@@ -259,6 +295,15 @@ const submitExam = async (req, res, next) => {
       answerBreakdown,
     });
 
+    // Log completion
+    await CheatingLog.create({
+      studentId: req.user._id,
+      examId: exam._id,
+      sessionId: session._id,
+      eventType: isTimeout ? 'time-expired' : 'assessment-submitted',
+      details: `Assessment submitted. Score: ${score}/${exam.totalMarks} (${percentage.toFixed(1)}%)`,
+    });
+
     res.json({
       success: true,
       message: 'Exam submitted successfully',
@@ -273,6 +318,63 @@ const submitExam = async (req, res, next) => {
         isPassed,
         timeTaken,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Log anti-cheat event via HTTP
+// @route   POST /api/student/cheat/log
+const logCheatEvent = async (req, res, next) => {
+  try {
+    const { examId, type, details } = req.body;
+
+    if (!examId || !type) {
+      return res.status(400).json({ success: false, message: 'Exam ID and event type are required' });
+    }
+
+    const session = await ExamSession.findOne({
+      studentId: req.user._id,
+      examId,
+      status: 'ongoing',
+    });
+
+    if (!session) {
+      return res.status(404).json({ success: false, message: 'No active session found' });
+    }
+
+    const exam = await Exam.findById(examId).select('maxWarnings');
+    const maxWarnings = exam?.maxWarnings ?? 3;
+
+    session.warningCount += 1;
+    session.lastActive = new Date();
+
+    let isVoided = false;
+    if (session.warningCount >= maxWarnings) {
+      session.status = 'voided';
+      isVoided = true;
+    }
+    await session.save();
+
+    await CheatingLog.create({
+      studentId: req.user._id,
+      examId,
+      sessionId: session._id,
+      eventType: type,
+      details: details || '',
+      warningNumberAtEvent: session.warningCount,
+      timestamp: new Date(),
+    });
+
+    res.json({
+      success: true,
+      warningCount: session.warningCount,
+      maxWarnings,
+      isVoided,
+      message: isVoided
+        ? `Assessment terminated: Maximum warnings (${maxWarnings}) exceeded.`
+        : `Security warning ${session.warningCount}/${maxWarnings} recorded.`,
     });
   } catch (error) {
     next(error);
@@ -311,4 +413,12 @@ const getResultDetail = async (req, res, next) => {
   }
 };
 
-module.exports = { getAvailableExams, startExam, saveAnswer, submitExam, getMyResults, getResultDetail };
+module.exports = {
+  getAvailableExams,
+  startExam,
+  saveAnswer,
+  submitExam,
+  logCheatEvent,
+  getMyResults,
+  getResultDetail,
+};

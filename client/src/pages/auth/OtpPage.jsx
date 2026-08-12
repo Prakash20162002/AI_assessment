@@ -19,8 +19,8 @@ const OtpPage = () => {
   const email = state?.email;
 
   useEffect(() => {
-    if (!userId) navigate('/register');
-  }, [userId, navigate]);
+    if (!userId && !email) navigate('/register');
+  }, [userId, email, navigate]);
 
   useEffect(() => {
     if (countdown > 0) {
@@ -64,7 +64,7 @@ const OtpPage = () => {
     }
     setLoading(true);
     try {
-      const { data } = await api.post('/auth/verify-otp', { userId, otp: otpString });
+      const { data } = await api.post('/auth/verify-otp', { userId, email, otp: otpString });
       login(data.user, data.accessToken);
       toast.success('Email verified! Welcome aboard 🎉');
       navigate('/student/dashboard');
@@ -78,8 +78,12 @@ const OtpPage = () => {
   const handleResend = async () => {
     setResendLoading(true);
     try {
-      await api.post('/auth/resend-otp', { userId });
-      toast.success('New OTP sent to your email');
+      const { data } = await api.post('/auth/resend-otp', { userId, email });
+      if (data?.devOtp) {
+        toast.success(`New OTP sent to email! (Verification Code: ${data.devOtp})`, { duration: 10000 });
+      } else {
+        toast.success(data?.message || 'New OTP sent to your email');
+      }
       setCountdown(60);
       setOtp(Array(6).fill(''));
     } catch (err) {

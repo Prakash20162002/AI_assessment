@@ -89,10 +89,15 @@ const sendOTP = async (req, res, next) => {
 // POST /api/auth/register
 // ============================================================
 const register = async (req, res, next) => {
+  const reqId = `reg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   try {
+    console.log(`📥 [REGISTRATION_REQUEST_RECEIVED] [${reqId}]`);
+    console.log(`🔍 [REGISTRATION_VALIDATION_STARTED] [${reqId}]`);
+
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
+      console.log(`❌ [REGISTRATION_VALIDATION_FAILED] [${reqId}] Missing required fields`);
       return res.status(400).json({
         success: false,
         message: 'Name, email and password are required',
@@ -102,24 +107,30 @@ const register = async (req, res, next) => {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (password.length < 6) {
+      console.log(`❌ [REGISTRATION_VALIDATION_FAILED] [${reqId}] Password under 6 chars`);
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 6 characters',
       });
     }
 
+    console.log(`🔍 [USER_LOOKUP_STARTED] [${reqId}] Email: ${maskEmail(normalizedEmail)}`);
     let user = await User.findOne({ email: normalizedEmail });
+    console.log(`✅ [USER_LOOKUP_COMPLETED] [${reqId}] Existing user found: ${!!user}`);
 
     if (user) {
       if (user.isVerified) {
-        return res.status(400).json({
+        console.log(`⚠️ [REGISTRATION_FAILED] [${reqId}] User already verified`);
+        return res.status(409).json({
           success: false,
-          message: 'Email already Registered. Please login instead.',
+          message: 'An account with this email address already exists. Please login instead.',
         });
       }
+      console.log(`📝 [USER_CREATE_STARTED] [${reqId}] Updating unverified user details`);
       user.name = name.trim();
-      user.password = password;
+      user.password = password; // pre-save hook handles hashing
     } else {
+      console.log(`📝 [USER_CREATE_STARTED] [${reqId}] Creating new student user`);
       user = new User({
         name: name.trim(),
         email: normalizedEmail,
@@ -129,17 +140,17 @@ const register = async (req, res, next) => {
       });
     }
 
-    console.log(`🔑 [OTP_REQUEST_STARTED] Registration for ${maskEmail(user.email)}`);
+    console.log(`🔑 [PASSWORD_HASH_STARTED] [${reqId}] Generating OTP & hashing password`);
     const rawOtp = user.generateOTP();
     await user.save();
-    console.log(`🔒 [OTP_STORED] User registered & hashed OTP saved for ${maskEmail(user.email)}`);
+    console.log(`✅ [PASSWORD_HASH_COMPLETED] & [USER_CREATE_COMPLETED] [${reqId}] User ID: ${user._id}`);
 
-    console.log(`📧 [OTP_PROVIDER_REQUEST_STARTED] Dispatching OTP to ${maskEmail(user.email)}`);
+    console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Dispatching verification email to ${maskEmail(user.email)}`);
     try {
       await sendOTPEmail(user.email, user.name, rawOtp, 'verification');
-      console.log(`✅ [OTP_PROVIDER_SUCCESS] Registration OTP delivered to ${maskEmail(user.email)}`);
+      console.log(`✅ [EMAIL_SEND_COMPLETED] [${reqId}] OTP delivered successfully`);
     } catch (emailError) {
-      console.error(`❌ [OTP_PROVIDER_FAILURE] Registration OTP dispatch failed: ${emailError.message}`);
+      console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] SMTP dispatch failed: ${emailError.message}`);
       return res.status(400).json({
         success: false,
         message: 'Unable to send verification OTP email. Please check your email address or try again later.',
@@ -147,6 +158,7 @@ const register = async (req, res, next) => {
       });
     }
 
+    console.log(`🎉 [REGISTRATION_SUCCESS] [${reqId}] Registration complete for ${maskEmail(user.email)}`);
     return res.status(201).json({
       success: true,
       message: 'Registration successful. A 6-digit OTP code has been sent to your email.',
@@ -154,6 +166,7 @@ const register = async (req, res, next) => {
       ...(process.env.NODE_ENV === 'development' ? { devOtp: rawOtp } : {}),
     });
   } catch (error) {
+    console.error(`❌ [REGISTRATION_FAILED] [${reqId}] Unexpected exception: ${error.message}`);
     next(error);
   }
 };

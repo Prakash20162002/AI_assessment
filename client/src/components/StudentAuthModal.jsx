@@ -177,18 +177,11 @@ export default function StudentAuthModal({
       }
       setMode('otp');
     } catch (err) {
-      console.error(
-        'Student registration error:',
-        err
-      );
-
+      const serverMessage = err.response?.data?.message;
       if (!err.response) {
-        toast.error('Unable to connect to server. Is the backend running?');
+        toast.error('Unable to connect to server. Please check your network connection.');
       } else {
-        toast.error(
-          err.response?.data?.message ||
-            'Registration failed. Please try again.'
-        );
+        toast.error(serverMessage || 'Registration failed. Please verify your details and try again.');
       }
     } finally {
       setLoading(false);

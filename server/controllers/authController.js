@@ -67,9 +67,9 @@ const sendOTP = async (req, res, next) => {
       console.log(`✅ [OTP_PROVIDER_SUCCESS] OTP delivered to ${maskEmail(user.email)}`);
     } catch (emailError) {
       console.error(`❌ [OTP_PROVIDER_FAILURE] Email dispatch failed for ${maskEmail(user.email)}: ${emailError.message}`);
-      return res.status(500).json({
+      return res.status(400).json({
         success: false,
-        message: 'Unable to send OTP. Please check your email address and try again.',
+        message: 'Unable to send OTP email. Please check your email address and try again.',
       });
     }
 
@@ -140,9 +140,9 @@ const register = async (req, res, next) => {
       console.log(`✅ [OTP_PROVIDER_SUCCESS] Registration OTP delivered to ${maskEmail(user.email)}`);
     } catch (emailError) {
       console.error(`❌ [OTP_PROVIDER_FAILURE] Registration OTP dispatch failed: ${emailError.message}`);
-      return res.status(500).json({
+      return res.status(400).json({
         success: false,
-        message: 'Unable to send verification OTP. Please verify your email address and try again.',
+        message: 'Unable to send verification OTP email. Please check your email address or try again later.',
         userId: user._id,
       });
     }

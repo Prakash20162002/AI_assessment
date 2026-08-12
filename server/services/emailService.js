@@ -1,4 +1,10 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Custom DNS lookup forcing IPv4 resolution to prevent ENETUNREACH on IPv6 routes
+const ipv4Lookup = (hostname, options, callback) => {
+  return dns.lookup(hostname, { ...options, family: 4, hints: dns.ADDRCONFIG }, callback);
+};
 
 // Singleton cached transporters map
 const transporters = new Map();
@@ -9,24 +15,23 @@ const getTransporter = (portOverride = null) => {
   const key = `smtp_${port}`;
 
   if (!transporters.has(key)) {
-    // Port 465 = SSL (secure: true). Port 587 = STARTTLS (secure: false, requireTLS: true)
     const isSecure = port === 465;
     const transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.gmail.com',
       port,
       secure: isSecure,
       requireTLS: port === 587,
-      family: 4, // Force IPv4 to prevent ENETUNREACH IPv6 failures on cloud instances
+      lookup: ipv4Lookup, // Forces IPv4 DNS lookup
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
       tls: {
-        rejectUnauthorized: false,
+        rejectUnauthorized: true, // Strict TLS certificate validation
       },
-      connectionTimeout: 6000,
-      greetingTimeout: 6000,
-      socketTimeout: 6000,
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 4000,
     });
     transporters.set(key, transporter);
   }
@@ -42,36 +47,132 @@ const maskEmail = (email) => {
   return `${user.substring(0, 2)}***@${domain}`;
 };
 
-// Differentiate transient network/route errors from permanent auth/validation errors
-const isTransientError = (err) => {
-  if (!err) return false;
-  const msg = (err.message || '').toLowerCase();
-  const code = (err.code || '').toUpperCase();
+// --- HTTPS API Transports for Cloud Hosting (Render / Vercel / Netlify) ---
 
-  if (
-    code === 'EAUTH' ||
-    msg.includes('authentication failed') ||
-    msg.includes('535') ||
-    msg.includes('invalid recipient') ||
-    msg.includes('550')
-  ) {
-    return false; // Permanent failure
+// 1. Resend HTTPS API Dispatch (Port 443)
+const sendViaResendApi = async ({ to, subject, text, html }) => {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+
+  const sender = process.env.EMAIL_FROM || 'DevPhoenix <onboarding@resend.dev>';
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: sender,
+      to: [to],
+      subject,
+      text,
+      html,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Resend API Error: ${data.message || res.statusText}`);
   }
-
-  return (
-    code === 'ENETUNREACH' ||
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNRESET' ||
-    code === 'ECONNREFUSED' ||
-    code === 'EHOSTUNREACH' ||
-    code === 'ESOCKETTIMEDOUT' ||
-    code === 'ENOTFOUND' ||
-    msg.includes('timeout') ||
-    msg.includes('connect')
-  );
+  return { success: true, messageId: data.id, provider: 'RESEND_HTTPS_API' };
 };
 
+// 2. Brevo (Sendinblue) HTTPS API Dispatch (Port 443)
+const sendViaBrevoApi = async ({ to, subject, text, html }) => {
+  const apiKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY;
+  if (!apiKey) return null;
+
+  const senderEmail = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'DevPhoenix Technologies LLP', email: senderEmail },
+      to: [{ email: to }],
+      subject,
+      textContent: text,
+      htmlContent: html,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Brevo API Error: ${data.message || res.statusText}`);
+  }
+  return { success: true, messageId: data.messageId, provider: 'BREVO_HTTPS_API' };
+};
+
+// 3. SendGrid HTTPS API Dispatch (Port 443)
+const sendViaSendGridApi = async ({ to, subject, text, html }) => {
+  const apiKey = process.env.SENDGRID_API_KEY;
+  if (!apiKey) return null;
+
+  const senderEmail = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
+  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: senderEmail, name: 'DevPhoenix Technologies LLP' },
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html', value: html },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`SendGrid API Error: ${errorText}`);
+  }
+  return { success: true, messageId: `sg_${Date.now()}`, provider: 'SENDGRID_HTTPS_API' };
+};
+
+// Unified Email Service Abstraction
 const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
+  console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Recipient: ${maskEmail(to)}`);
+  const startTime = Date.now();
+
+  // Step 1: Check HTTPS API Providers first (Resend -> Brevo -> SendGrid)
+  // HTTPS API operates over port 443 and bypasses cloud provider outbound SMTP port blocks.
+  try {
+    if (process.env.RESEND_API_KEY) {
+      console.log(`📡 [EMAIL_PROVIDER_SELECTED] [${reqId}] Resend HTTPS API (Port 443)`);
+      const res = await sendViaResendApi({ to, subject, text, html });
+      const duration = Date.now() - startTime;
+      console.log(`✅ [EMAIL_SEND_SUCCESS] [${reqId}] Delivered via Resend HTTPS API in ${duration}ms (ID: ${res.messageId})`);
+      return res;
+    }
+
+    if (process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY) {
+      console.log(`📡 [EMAIL_PROVIDER_SELECTED] [${reqId}] Brevo HTTPS API (Port 443)`);
+      const res = await sendViaBrevoApi({ to, subject, text, html });
+      const duration = Date.now() - startTime;
+      console.log(`✅ [EMAIL_SEND_SUCCESS] [${reqId}] Delivered via Brevo HTTPS API in ${duration}ms (ID: ${res.messageId})`);
+      return res;
+    }
+
+    if (process.env.SENDGRID_API_KEY) {
+      console.log(`📡 [EMAIL_PROVIDER_SELECTED] [${reqId}] SendGrid HTTPS API (Port 443)`);
+      const res = await sendViaSendGridApi({ to, subject, text, html });
+      const duration = Date.now() - startTime;
+      console.log(`✅ [EMAIL_SEND_SUCCESS] [${reqId}] Delivered via SendGrid HTTPS API in ${duration}ms (ID: ${res.messageId})`);
+      return res;
+    }
+  } catch (apiErr) {
+    console.error(`⚠️ [HTTPS_API_PROVIDER_FAILURE] [${reqId}]: ${apiErr.message}`);
+  }
+
+  // Step 2: Nodemailer Direct SMTP Transport with IPv4 Lookup Force
+  const configuredPort = parseInt(process.env.EMAIL_PORT || '587', 10);
   const senderAddress = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
   const mailOptions = {
     from: `"DevPhoenix Technologies LLP" <${senderAddress}>`,
@@ -79,66 +180,33 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
     subject,
     text,
     html,
-    headers: {
-      'X-Priority': '1 (Highest)',
-      'X-MSMail-Priority': 'High',
-      'Importance': 'High',
-    },
   };
 
-  const configuredPort = parseInt(process.env.EMAIL_PORT || '587', 10);
-  console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Recipient: ${maskEmail(to)}`);
-
-  // --- 1. Primary SMTP Attempt ---
-  const startTime = Date.now();
+  // Primary SMTP attempt
   try {
-    console.log(`📡 [SMTP_PRIMARY_ATTEMPT] [${reqId}] Port ${configuredPort} (IPv4 preferred)`);
+    console.log(`📡 [EMAIL_PROVIDER_SELECTED] [${reqId}] SMTP Port ${configuredPort} (Forced IPv4)`);
     const primaryTransporter = getTransporter(configuredPort);
     const info = await primaryTransporter.sendMail(mailOptions);
     const duration = Date.now() - startTime;
-    console.log(`✅ [SMTP_PRIMARY_SUCCESS] [${reqId}] Port ${configuredPort} in ${duration}ms (ID: ${info.messageId})`);
-    console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Port ${configuredPort}`);
-    return { success: true, messageId: info.messageId };
+    console.log(`✅ [EMAIL_SEND_SUCCESS] [${reqId}] Delivered via SMTP Port ${configuredPort} in ${duration}ms (ID: ${info.messageId})`);
+    return { success: true, messageId: info.messageId, provider: `SMTP_${configuredPort}` };
   } catch (primaryErr) {
     const primaryDuration = Date.now() - startTime;
-    const isTransient = isTransientError(primaryErr);
+    console.warn(`⚠️ [SMTP_PRIMARY_FAILURE] [${reqId}] Port ${configuredPort} failed in ${primaryDuration}ms: ${primaryErr.message}`);
 
-    if (isTransient) {
-      console.warn(`⚠️ [SMTP_PRIMARY_TRANSIENT_FAILURE] [${reqId}] Port ${configuredPort} failed in ${primaryDuration}ms: ${primaryErr.message} (Code: ${primaryErr.code || 'TIMEOUT'})`);
-    } else {
-      console.error(`❌ [SMTP_PRIMARY_PERMANENT_FAILURE] [${reqId}] Port ${configuredPort} failed in ${primaryDuration}ms: ${primaryErr.message}`);
-      throw new Error(`Email authentication failed: ${primaryErr.message}`);
-    }
-
-    // --- 2. Controlled Retry on Primary Port (if transient) ---
-    if (isTransient) {
-      try {
-        console.log(`🔄 [SMTP_RETRY_ATTEMPT] [${reqId}] Retrying Port ${configuredPort} after backoff...`);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const retryTransporter = getTransporter(configuredPort);
-        const retryInfo = await retryTransporter.sendMail(mailOptions);
-        console.log(`✅ [SMTP_PRIMARY_SUCCESS] [${reqId}] Retry Port ${configuredPort} succeeded (ID: ${retryInfo.messageId})`);
-        console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Port ${configuredPort} retry`);
-        return { success: true, messageId: retryInfo.messageId };
-      } catch (retryErr) {
-        console.warn(`⚠️ [SMTP_RETRY_FAILURE] [${reqId}] Retry Port ${configuredPort} failed: ${retryErr.message}`);
-      }
-    }
-
-    // --- 3. Secondary Port Failover (465 if 587, 587 if 465) ---
+    // Failover SMTP attempt (465 if 587, 587 if 465)
     const secondaryPort = configuredPort === 465 ? 587 : 465;
     const failoverStartTime = Date.now();
     try {
-      console.log(`📡 [SMTP_FALLBACK_ATTEMPT] [${reqId}] Failover to Port ${secondaryPort} (IPv4 preferred)`);
+      console.log(`📡 [EMAIL_PROVIDER_SELECTED] [${reqId}] Failover to SMTP Port ${secondaryPort} (Forced IPv4)`);
       const secondaryTransporter = getTransporter(secondaryPort);
       const secondaryInfo = await secondaryTransporter.sendMail(mailOptions);
       const failoverDuration = Date.now() - failoverStartTime;
-      console.log(`✅ [SMTP_FALLBACK_SUCCESS] [${reqId}] Port ${secondaryPort} in ${failoverDuration}ms (ID: ${secondaryInfo.messageId})`);
-      console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Failover Port ${secondaryPort}`);
-      return { success: true, messageId: secondaryInfo.messageId };
+      console.log(`✅ [EMAIL_SEND_SUCCESS] [${reqId}] Delivered via Failover SMTP Port ${secondaryPort} in ${failoverDuration}ms (ID: ${secondaryInfo.messageId})`);
+      return { success: true, messageId: secondaryInfo.messageId, provider: `SMTP_${secondaryPort}` };
     } catch (secondaryErr) {
-      const failoverDuration = Date.now() - failoverStartTime;
-      console.error(`❌ [SMTP_FALLBACK_FAILURE] [${reqId}] Port ${secondaryPort} failed in ${failoverDuration}ms: ${secondaryErr.message}`);
+      const totalDuration = Date.now() - startTime;
+      console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] All transports failed in ${totalDuration}ms. Primary: ${primaryErr.message} | Secondary: ${secondaryErr.message}`);
 
       // In development, attempt Ethereal test mail fallback
       if (process.env.NODE_ENV !== 'production') {
@@ -150,7 +218,7 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
               host: 'smtp.ethereal.email',
               port: 587,
               secure: false,
-              family: 4,
+              lookup: ipv4Lookup,
               auth: {
                 user: testAccount.user,
                 pass: testAccount.pass,
@@ -162,13 +230,11 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
           const previewUrl = nodemailer.getTestMessageUrl(fallbackInfo);
           console.log(`✅ [DEV TEST EMAIL SENT] Delivered via Ethereal Mail to ${maskEmail(to)}`);
           console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
-          return { success: true, messageId: fallbackInfo.messageId, previewUrl };
+          return { success: true, messageId: fallbackInfo.messageId, previewUrl, provider: 'ETHEREAL_DEV' };
         } catch (fallbackErr) {
-          console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] All transports failed: ${fallbackErr.message}`);
           throw new Error(`Email delivery failed: ${primaryErr.message}`);
         }
       } else {
-        console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] Transports on ${configuredPort} & ${secondaryPort} failed`);
         throw new Error(`Email delivery failed: ${primaryErr.message}`);
       }
     }

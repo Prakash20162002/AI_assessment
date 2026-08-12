@@ -147,13 +147,13 @@ const register = async (req, res, next) => {
 
     console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Dispatching verification email to ${maskEmail(user.email)}`);
     try {
-      await sendOTPEmail(user.email, user.name, rawOtp, 'verification');
+      await sendOTPEmail(user.email, user.name, rawOtp, 'verification', reqId);
       console.log(`✅ [EMAIL_SEND_COMPLETED] [${reqId}] OTP delivered successfully`);
     } catch (emailError) {
       console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] SMTP dispatch failed: ${emailError.message}`);
       return res.status(400).json({
         success: false,
-        message: 'Unable to send verification OTP email. Please check your email address or try again later.',
+        message: "We couldn't send the verification email right now. Please try again in a moment.",
         userId: user._id,
       });
     }

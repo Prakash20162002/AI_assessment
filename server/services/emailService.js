@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-// Singleton cached transporters
+// Singleton cached transporters map
 const transporters = new Map();
 
 const getTransporter = (portOverride = null) => {
@@ -16,6 +16,7 @@ const getTransporter = (portOverride = null) => {
       port,
       secure: isSecure,
       requireTLS: port === 587,
+      family: 4, // Force IPv4 to prevent ENETUNREACH IPv6 failures on cloud instances
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
@@ -23,9 +24,9 @@ const getTransporter = (portOverride = null) => {
       tls: {
         rejectUnauthorized: false,
       },
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 8000,
+      connectionTimeout: 6000,
+      greetingTimeout: 6000,
+      socketTimeout: 6000,
     });
     transporters.set(key, transporter);
   }
@@ -41,7 +42,36 @@ const maskEmail = (email) => {
   return `${user.substring(0, 2)}***@${domain}`;
 };
 
-const sendEmail = async ({ to, subject, text, html }) => {
+// Differentiate transient network/route errors from permanent auth/validation errors
+const isTransientError = (err) => {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  const code = (err.code || '').toUpperCase();
+
+  if (
+    code === 'EAUTH' ||
+    msg.includes('authentication failed') ||
+    msg.includes('535') ||
+    msg.includes('invalid recipient') ||
+    msg.includes('550')
+  ) {
+    return false; // Permanent failure
+  }
+
+  return (
+    code === 'ENETUNREACH' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'EHOSTUNREACH' ||
+    code === 'ESOCKETTIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    msg.includes('timeout') ||
+    msg.includes('connect')
+  );
+};
+
+const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
   const senderAddress = process.env.EMAIL_USER || 'no-reply@devphoenix.com';
   const mailOptions = {
     from: `"DevPhoenix Technologies LLP" <${senderAddress}>`,
@@ -56,37 +86,71 @@ const sendEmail = async ({ to, subject, text, html }) => {
     },
   };
 
-  const configuredPort = parseInt(process.env.EMAIL_PORT || '465', 10);
-  const primaryTransporter = getTransporter(configuredPort);
+  const configuredPort = parseInt(process.env.EMAIL_PORT || '587', 10);
+  console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Recipient: ${maskEmail(to)}`);
 
+  // --- 1. Primary SMTP Attempt ---
+  const startTime = Date.now();
   try {
+    console.log(`📡 [SMTP_PRIMARY_ATTEMPT] [${reqId}] Port ${configuredPort} (IPv4 preferred)`);
+    const primaryTransporter = getTransporter(configuredPort);
     const info = await primaryTransporter.sendMail(mailOptions);
-    console.log(`📧 [EMAIL DELIVERED] Primary Port ${configuredPort} -> ${maskEmail(to)} (ID: ${info.messageId})`);
+    const duration = Date.now() - startTime;
+    console.log(`✅ [SMTP_PRIMARY_SUCCESS] [${reqId}] Port ${configuredPort} in ${duration}ms (ID: ${info.messageId})`);
+    console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Port ${configuredPort}`);
     return { success: true, messageId: info.messageId };
   } catch (primaryErr) {
-    console.error(`⚠️ [Primary SMTP Port ${configuredPort} failed]: ${primaryErr.message}`);
+    const primaryDuration = Date.now() - startTime;
+    const isTransient = isTransientError(primaryErr);
 
-    // Try secondary port failover (587 if primary was 465, or 465 if primary was 587)
+    if (isTransient) {
+      console.warn(`⚠️ [SMTP_PRIMARY_TRANSIENT_FAILURE] [${reqId}] Port ${configuredPort} failed in ${primaryDuration}ms: ${primaryErr.message} (Code: ${primaryErr.code || 'TIMEOUT'})`);
+    } else {
+      console.error(`❌ [SMTP_PRIMARY_PERMANENT_FAILURE] [${reqId}] Port ${configuredPort} failed in ${primaryDuration}ms: ${primaryErr.message}`);
+      throw new Error(`Email authentication failed: ${primaryErr.message}`);
+    }
+
+    // --- 2. Controlled Retry on Primary Port (if transient) ---
+    if (isTransient) {
+      try {
+        console.log(`🔄 [SMTP_RETRY_ATTEMPT] [${reqId}] Retrying Port ${configuredPort} after backoff...`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const retryTransporter = getTransporter(configuredPort);
+        const retryInfo = await retryTransporter.sendMail(mailOptions);
+        console.log(`✅ [SMTP_PRIMARY_SUCCESS] [${reqId}] Retry Port ${configuredPort} succeeded (ID: ${retryInfo.messageId})`);
+        console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Port ${configuredPort} retry`);
+        return { success: true, messageId: retryInfo.messageId };
+      } catch (retryErr) {
+        console.warn(`⚠️ [SMTP_RETRY_FAILURE] [${reqId}] Retry Port ${configuredPort} failed: ${retryErr.message}`);
+      }
+    }
+
+    // --- 3. Secondary Port Failover (465 if 587, 587 if 465) ---
     const secondaryPort = configuredPort === 465 ? 587 : 465;
+    const failoverStartTime = Date.now();
     try {
-      console.log(`🔄 Attempting Port ${secondaryPort} failover...`);
+      console.log(`📡 [SMTP_FALLBACK_ATTEMPT] [${reqId}] Failover to Port ${secondaryPort} (IPv4 preferred)`);
       const secondaryTransporter = getTransporter(secondaryPort);
       const secondaryInfo = await secondaryTransporter.sendMail(mailOptions);
-      console.log(`📧 [EMAIL DELIVERED] Failover Port ${secondaryPort} -> ${maskEmail(to)} (ID: ${secondaryInfo.messageId})`);
+      const failoverDuration = Date.now() - failoverStartTime;
+      console.log(`✅ [SMTP_FALLBACK_SUCCESS] [${reqId}] Port ${secondaryPort} in ${failoverDuration}ms (ID: ${secondaryInfo.messageId})`);
+      console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] Delivered via Failover Port ${secondaryPort}`);
       return { success: true, messageId: secondaryInfo.messageId };
     } catch (secondaryErr) {
-      console.error(`⚠️ [Failover SMTP Port ${secondaryPort} failed]: ${secondaryErr.message}`);
+      const failoverDuration = Date.now() - failoverStartTime;
+      console.error(`❌ [SMTP_FALLBACK_FAILURE] [${reqId}] Port ${secondaryPort} failed in ${failoverDuration}ms: ${secondaryErr.message}`);
 
       // In development, attempt Ethereal test mail fallback
       if (process.env.NODE_ENV !== 'production') {
         try {
-          console.log(`🔄 Attempting Ethereal test mail fallback...`);
+          console.log(`🔄 [SMTP_DEV_FALLBACK] [${reqId}] Attempting Ethereal test mail fallback...`);
           if (!fallbackTransporter) {
             const testAccount = await nodemailer.createTestAccount();
             fallbackTransporter = nodemailer.createTransport({
               host: 'smtp.ethereal.email',
               port: 587,
               secure: false,
+              family: 4,
               auth: {
                 user: testAccount.user,
                 pass: testAccount.pass,
@@ -100,17 +164,18 @@ const sendEmail = async ({ to, subject, text, html }) => {
           console.log(`🔗 [VIEW EMAIL PREVIEW IN BROWSER]: ${previewUrl}`);
           return { success: true, messageId: fallbackInfo.messageId, previewUrl };
         } catch (fallbackErr) {
-          console.error(`❌ [ALL EMAIL TRANSPORTS FAILED]: ${fallbackErr.message}`);
+          console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] All transports failed: ${fallbackErr.message}`);
           throw new Error(`Email delivery failed: ${primaryErr.message}`);
         }
       } else {
+        console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] Transports on ${configuredPort} & ${secondaryPort} failed`);
         throw new Error(`Email delivery failed: ${primaryErr.message}`);
       }
     }
   }
 };
 
-const sendOTPEmail = async (email, name, otp, type = 'verification') => {
+const sendOTPEmail = async (email, name, otp, type = 'verification', reqId = 'sys') => {
   const subjects = {
     verification: `🔒 Code: ${otp} — OTP Verification DevPhoenix Technologies LLP`,
     forgot: `🔑 Code: ${otp} — Password Reset DevPhoenix Technologies LLP`,
@@ -187,6 +252,7 @@ const sendOTPEmail = async (email, name, otp, type = 'verification') => {
     subject: subjects[type],
     text: plainText,
     html,
+    reqId,
   });
 };
 

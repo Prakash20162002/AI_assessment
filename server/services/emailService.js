@@ -1,7 +1,7 @@
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
 const dns = require('dns');
-const { independenceDayOtpTemplate } = require('../utils/emailTemplates');
+const { independenceDayOtpTemplate, PUBLIC_LOGO_URL } = require('../utils/emailTemplates');
 
 // Custom DNS lookup forcing IPv4 resolution for local dev fallback
 const ipv4Lookup = (hostname, options, callback) => {
@@ -218,9 +218,9 @@ const generatePremiumEmailHtml = ({ name, titleText, mainHeading, bodyText, otpC
       <div class="email-outer">
         <div class="email-card-container">
           
-          <!-- Top Logo Badge -->
-          <div class="brand-logo-badge">
-            <span style="color:#ffffff; font-size:24px; font-weight:900;">W</span>
+          <!-- Top Logo -->
+          <div style="text-align: center; margin-bottom: 24px;">
+            <img src="${PUBLIC_LOGO_URL}" alt="DevPhoeniX Technologies LLP" width="200" style="max-height: 48px; max-width: 200px; width: 200px; height: auto; display: block; margin: 0 auto; border: 0; outline: none; text-decoration: none;" />
           </div>
 
           <!-- Greeting Headline -->
@@ -258,29 +258,12 @@ const generatePremiumEmailHtml = ({ name, titleText, mainHeading, bodyText, otpC
             </div>
           </div>
 
-          <!-- Card 2: App & Features Info Card -->
-          <div class="card-box">
-            <h2 class="app-card-title">Get the DevPhoeniX Assessment App!</h2>
-            <p class="app-card-sub">Get the most of DevPhoeniX by logging into our web and mobile platform. Complete assessments, track your progress, and view instant AI feedback.</p>
-            
-            <div class="app-badges-container">
-              <a href="${clientUrl}" class="badge-btn" target="_blank">🌐 Web Portal</a>
-              <a href="${clientUrl}" class="badge-btn" target="_blank">📱 Mobile App</a>
-            </div>
-          </div>
-
           <!-- Footer Section -->
-          <div class="social-links">
-            <a href="https://facebook.com" class="social-icon" target="_blank">f</a>
-            <a href="https://twitter.com" class="social-icon" target="_blank">t</a>
-            <a href="https://linkedin.com" class="social-icon" target="_blank">in</a>
+          <div style="margin-top: 32px; text-align: center;">
+            <div class="footer-brand">DevPhoeniX Technologies LLP</div>
+            <p class="footer-text">Official AI-Assessment & Online Examination Platform</p>
+            <p class="footer-text">© ${new Date().getFullYear()} DevPhoeniX Technologies LLP. All rights reserved.</p>
           </div>
-
-          <div class="footer-brand">devphoenix</div>
-
-          <p class="footer-text">Copyright © ${new Date().getFullYear()}, DevPhoeniX Technologies LLP.</p>
-          <p class="footer-text">Official AI-Assessment & Online Examination Platform.</p>
-          <p class="footer-text" style="margin-top:6px; font-style:italic;">A better company begins with a personalized assessment experience.</p>
 
         </div>
       </div>

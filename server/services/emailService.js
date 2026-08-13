@@ -1,6 +1,7 @@
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
 const dns = require('dns');
+const { independenceDayOtpTemplate } = require('../utils/emailTemplates');
 
 // Custom DNS lookup forcing IPv4 resolution for local dev fallback
 const ipv4Lookup = (hostname, options, callback) => {
@@ -316,12 +317,9 @@ const sendOTPEmail = async (email, name, otp, type = 'verification', reqId = 'sy
 
   const plainText = `Hi ${name},\n\nYour One-Time Password (OTP) verification code for DevPhoeniX Technologies AI-Assessment Platform is: ${otp}\n\nThis code expires in ${expireMinutes} minutes. If you did not create this account, you can safely ignore this email.\n\nRegards,\nDevPhoeniX Technologies Team`;
 
-  const html = generatePremiumEmailHtml({
-    name,
-    titleText: titles[type],
-    mainHeading: headings[type],
-    bodyText: bodyTexts[type],
-    otpCode: otp,
+  const html = independenceDayOtpTemplate({
+    name: name || 'User',
+    otp,
     expireMinutes,
     type,
   });

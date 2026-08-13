@@ -5,13 +5,14 @@ import {
 import { Toaster, toast } from 'react-hot-toast';
 import {
   BookOpen, Clock, AlertTriangle, Trophy, Plus, Trash2,
-  ShieldAlert, CheckCircle2, XCircle, Camera, Wifi, Maximize2,
+  ShieldAlert, ShieldCheck, CheckCircle2, XCircle, Camera, Wifi, Maximize2,
   FileText, ArrowRight, ArrowLeft, Eye, EyeOff, Lock, Edit3,
   Layers, X, Users, LogOut, Link2, Copy, Home, AlertCircle,
   ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles, Menu, KeyRound, Check
 } from 'lucide-react';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import StudentAuthModal from './components/StudentAuthModal.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import { SocketProvider } from './context/SocketContext.jsx';
 import LoginPage from './pages/auth/LoginPage.jsx';
@@ -450,8 +451,9 @@ function StudentLanding() {
   const [exam, setExam] = useState(null);
   const [subject, setSubject] = useState(null);
   const [questions, setQuestions] = useState([]);
-  const [examStatus, setExamStatus] = useState('checking'); // 'checking', 'ready', 'not-found', 'unavailable', 'already-submitted', 'voided'
+  const [examStatus, setExamStatus] = useState('checking'); // 'checking', 'ready', 'not-found', 'unavailable', 'already-submitted', 'voided', 'error'
   const [resultId, setResultId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalMode, setAuthModalMode] = useState('login');
 
@@ -473,18 +475,22 @@ function StudentLanding() {
     let isMounted = true;
 
     const loadExamInfo = async () => {
+      console.log('[ASSESSMENT_ROUTE_STARTED]', { examId, user: user ? { id: user.id || user._id, email: user.email, isVerified: user.isVerified } : null });
+
       // 1. If user is authenticated and verified, check backend access endpoint
       if (user && user.isVerified) {
         try {
+          console.log('[ASSESSMENT_ACCESS_CHECK_STARTED]', { examId });
           const { data } = await api.get(`/student/exams/${examId}`);
+          console.log('[ASSESSMENT_ACCESS_CHECK_COMPLETED]', { success: data?.success });
           if (!isMounted) return;
 
           if (data?.data) {
             const ex = data.data;
             setExam({
               id: ex._id || examId,
-              title: ex.title,
-              description: ex.description,
+              title: ex.title || 'AI Proctored Assessment',
+              description: ex.description || '',
               duration: (ex.duration || 10) * 60,
               totalMarks: ex.totalMarks || 100,
               passingMarks: ex.passingMarks || 40,
@@ -512,57 +518,63 @@ function StudentLanding() {
             return;
           }
         } catch (err) {
-          // If 404 on backend, check local DB fallback
-          if (err.response?.status === 404) {
-            const localExam = DB.exams.get().find(e => e.id === examId);
-            if (!localExam) {
-              if (isMounted) setExamStatus('not-found');
-              return;
-            }
+          console.warn('[ASSESSMENT_LOAD_FAILED]', err.response?.status, err.message);
+          // If 401, token expired - let AuthContext handle or clear
+          if (err.response?.status === 401) {
+            localStorage.removeItem('accessToken');
           }
         }
       }
 
-      // Fallback/Local Exam Check (or metadata preview)
-      const exams = DB.exams.get();
-      let found = exams.find(e => e.id === examId);
-      if (!found && examId) {
-        found = {
-          id: examId,
-          subjectId: 's1',
-          title: 'AI Proctored Assessment',
-          duration: 600,
-          totalMarks: 20,
-          passingMarks: 8,
-          createdAt: new Date().toISOString()
-        };
+      // 2. Fallback/Local Exam Check (or metadata preview for unauthenticated students)
+      try {
+        const exams = DB.exams.get();
+        let found = exams.find(e => e.id === examId);
+        if (!found && examId) {
+          found = {
+            id: examId,
+            subjectId: 's1',
+            title: 'AI Proctored Assessment',
+            duration: 600,
+            totalMarks: 20,
+            passingMarks: 8,
+            createdAt: new Date().toISOString()
+          };
+        }
+
+        if (!isMounted) return;
+
+        if (!found) {
+          setExamStatus('not-found');
+          return;
+        }
+
+        setExam(found);
+
+        // Check existing results in local DB
+        const studentIdentifier = user?.name || sessionStorage.getItem('dp_student');
+        const existing = DB.results.get().find(r => r.examId === examId && (studentIdentifier ? r.studentName === studentIdentifier : false));
+        const submittedFlag = studentIdentifier ? sessionStorage.getItem(`dp_submitted_${examId}_${studentIdentifier}`) : null;
+
+        if (existing || submittedFlag) {
+          setExamStatus('already-submitted');
+          setResultId(existing?.id || null);
+          return;
+        }
+
+        const subs = DB.subjects.get();
+        setSubject(subs.find(s => s.id === found.subjectId) || { name: 'Proctored Exam' });
+        const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
+        setQuestions(qs.length > 0 ? qs : DB.questions.get());
+        setExamStatus('ready');
+        console.log('[ASSESSMENT_LOAD_COMPLETED]', { status: 'ready', title: found.title });
+      } catch (fallbackErr) {
+        console.error('[ASSESSMENT_FALLBACK_ERROR]', fallbackErr);
+        if (isMounted) {
+          setExamStatus('error');
+          setErrorMessage('Unable to initialize assessment session.');
+        }
       }
-
-      if (!isMounted) return;
-
-      if (!found) {
-        setExamStatus('not-found');
-        return;
-      }
-
-      setExam(found);
-
-      // Check existing results in local DB
-      const studentIdentifier = user?.name || sessionStorage.getItem('dp_student');
-      const existing = DB.results.get().find(r => r.examId === examId && (studentIdentifier ? r.studentName === studentIdentifier : false));
-      const submittedFlag = studentIdentifier ? sessionStorage.getItem(`dp_submitted_${examId}_${studentIdentifier}`) : null;
-
-      if (existing || submittedFlag) {
-        setExamStatus('already-submitted');
-        setResultId(existing?.id || null);
-        return;
-      }
-
-      const subs = DB.subjects.get();
-      setSubject(subs.find(s => s.id === found.subjectId) || { name: 'Proctored Exam' });
-      const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
-      setQuestions(qs.length > 0 ? qs : DB.questions.get());
-      setExamStatus('ready');
     };
 
     loadExamInfo();
@@ -720,9 +732,40 @@ function StudentLanding() {
     );
   }
 
-  const totalMarks = exam.totalMarks || questions.reduce((s, q) => s + (q.marks || 0), 0) || 100;
-  const questionCount = exam.questionCount || questions.length || 4;
-  const durationMinutes = Math.floor(exam.duration / 60);
+  // 6. Generic Error / Fallback
+  if (examStatus === 'error') {
+    return (
+      <div className="page-wrapper">
+        <Header disableBrandLink showAdmin={false} />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 480, width: '100%', padding: 40, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(230, 57, 70, 0.3)' }}>
+            <AlertCircle size={54} style={{ color: 'var(--primary-light)', margin: '0 auto 20px' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Unable to Load Assessment</h2>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              {errorMessage || 'We were unable to verify assessment parameters. Please check your network connection and try again.'}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="btn btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                <RefreshCw size={16} /> Try Again
+              </button>
+              <Link to="/" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
+                Return to Home
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const totalMarks = exam?.totalMarks || questions?.reduce((s, q) => s + (q.marks || 0), 0) || 100;
+  const questionCount = exam?.questionCount || questions?.length || 4;
+  const durationMinutes = Math.floor((exam?.duration || 600) / 60);
 
   return (
     <div className="page-wrapper">
@@ -3038,35 +3081,57 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   return (
-    <BrowserRouter>
-      {isLoading && (
-        <LoadingScreen onFinish={() => setIsLoading(false)} />
-      )}
-      <Toaster
-        position="top-center"
-        toastOptions={{
-          style: { background: '#0f0f11', color: '#f8f8fa', border: '1px solid rgba(255,255,255,.08)', fontSize: 13, fontWeight: 500, borderRadius: 12 },
-          success: { iconTheme: { primary: '#10b981', secondary: '#0f0f11' } },
-          error: { iconTheme: { primary: '#ef4444', secondary: '#0f0f11' } },
-        }}
-      />
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/exam/:examId" element={<StudentLanding />} />
-        <Route path="/exam/:examId/setup" element={<StudentGuard><SystemCheck /></StudentGuard>} />
-        <Route path="/exam/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
-        <Route path="/thankyou/:resultId" element={<ThankYouPage />} />
-        <Route path="/result/:id" element={<ResultPage />} />
-        <Route path="/cheated" element={<CheatedPage />} />
-        <Route path="/admin" element={<AdminLogin />} />
-        <Route path="/admin/dashboard" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
-        <Route path="*" element={
-          <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-            <p style={{ fontSize: 16, color: 'var(--text-muted)' }}>Page not found.</p>
-            <Link to="/" className="btn btn-secondary">Go Home</Link>
-          </div>
-        } />
-      </Routes>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <AuthProvider>
+        <SocketProvider>
+          <BrowserRouter>
+            {isLoading && (
+              <LoadingScreen onFinish={() => setIsLoading(false)} />
+            )}
+            <Toaster
+              position="top-center"
+              toastOptions={{
+                style: { background: '#0f0f11', color: '#f8f8fa', border: '1px solid rgba(255,255,255,.08)', fontSize: 13, fontWeight: 500, borderRadius: 12 },
+                success: { iconTheme: { primary: '#10b981', secondary: '#0f0f11' } },
+                error: { iconTheme: { primary: '#ef4444', secondary: '#0f0f11' } },
+              }}
+            />
+            <Routes>
+              {/* Home */}
+              <Route path="/" element={<HomePage />} />
+
+              {/* Student Authentication Pages */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/verify-otp" element={<OtpPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+              {/* Student Protected Dashboard */}
+              <Route path="/student/dashboard" element={<StudentGuard><StudentDashboard /></StudentGuard>} />
+
+              {/* Assessment Flow & Gateways */}
+              <Route path="/exam/:examId" element={<StudentLanding />} />
+              <Route path="/exam/:examId/setup" element={<StudentGuard><SystemCheck /></StudentGuard>} />
+              <Route path="/exam/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
+              <Route path="/thankyou/:resultId" element={<ThankYouPage />} />
+              <Route path="/result/:id" element={<ResultPage />} />
+              <Route path="/cheated" element={<CheatedPage />} />
+
+              {/* Admin Portal */}
+              <Route path="/admin" element={<AdminLogin />} />
+              <Route path="/admin/dashboard" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+
+              {/* 404 Catch-All */}
+              <Route path="*" element={
+                <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: '#09090b', color: '#f8f8fa' }}>
+                  <p style={{ fontSize: 16, color: 'var(--text-muted)' }}>Page not found.</p>
+                  <Link to="/" className="btn btn-secondary">Go Home</Link>
+                </div>
+              } />
+            </Routes>
+          </BrowserRouter>
+        </SocketProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

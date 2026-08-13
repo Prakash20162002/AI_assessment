@@ -41,6 +41,15 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) {
+    console.warn('[DEVPHOENIX_AUTH] useAuth was called outside of an AuthProvider. Using fallback auth state.');
+    return {
+      user: null,
+      loading: false,
+      login: () => {},
+      logout: () => {},
+      setUser: () => {},
+    };
+  }
   return ctx;
 };

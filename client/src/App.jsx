@@ -1284,16 +1284,64 @@ function ExamTake() {
 
   const saveResult = useCallback((cheated = false) => {
     let score = 0;
-    questions.forEach(q => { if (answers[q.id] === q.correctAnswer) score += (q.marks || 0); });
-    const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
+    let correct = 0;
+    let wrong = 0;
+    let skipped = 0;
+    const answerBreakdown = [];
+
+    questions.forEach((q, idx) => {
+      const selected = answers[q.id] || null;
+      const isCor = selected === q.correctAnswer;
+      const qMarks = q.marks || 1;
+
+      if (!selected) {
+        skipped++;
+      } else if (isCor) {
+        correct++;
+        score += qMarks;
+      } else {
+        wrong++;
+      }
+
+      answerBreakdown.push({
+        questionId: q.id || `q_${idx + 1}`,
+        questionText: q.questionText || `Question ${idx + 1}`,
+        options: q.options || {},
+        selectedOption: selected,
+        correctAnswer: q.correctAnswer,
+        isCorrect: isCor,
+        marks: isCor ? qMarks : 0,
+        maxMarks: qMarks,
+        explanation: q.explanation || '',
+      });
+    });
+
+    const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0) || 100;
+    const percentage = totalMarks > 0 ? parseFloat(((score / totalMarks) * 100).toFixed(1)) : 0;
+    const isPassed = score >= (exam?.passingMarks || Math.round(totalMarks * 0.4));
+
     const r = {
-      id: genId('res'), examId, studentName,
-      score, totalMarks, cheated,
+      id: genId('res'),
+      examId,
+      studentName: studentName || 'Student',
+      score,
+      totalMarks,
+      percentage,
+      isPassed,
+      correct,
+      wrong,
+      skipped,
+      totalQuestions: questions.length,
+      cheated,
       warnings: warningCountRef.current,
       status: cheated ? 'Disqualified' : 'Completed',
-      date: new Date().toLocaleString(), answers,
+      date: new Date().toLocaleString(),
+      answers,
+      questions,
+      answerBreakdown,
       timeTaken: (exam?.duration || 600) - timeLeft
     };
+
     DB.results.set([r, ...DB.results.get()]);
     return r;
   }, [answers, questions, examId, studentName, timeLeft, exam]);
@@ -1941,121 +1989,481 @@ function ThankYouPage() {
 ═══════════════════════════════════════════════════════ */
 function ResultPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [result, setResult] = useState(null);
-  const [questions, setQuestions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const isAdmin = user?.role === 'admin' || sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
 
   useEffect(() => {
     stopGlobalWebcamStreams();
-    const r = DB.results.get().find(r => r.id === id);
-    setResult(r);
-    if (r) {
-      const ex = DB.exams.get().find(e => e.id === r.examId);
-      if (ex) setQuestions(DB.questions.get().filter(q => q.subjectId === ex.subjectId));
-    }
+    let isMounted = true;
 
-    // Trap browser back button
+    const loadResultData = async () => {
+      setLoading(true);
+      setError('');
+
+      // 1. Try Backend API first
+      try {
+        let endpoint = `/student/results/${id}`;
+        if (isAdmin) {
+          endpoint = `/admin/results/${id}`;
+        }
+        
+        let apiData = null;
+        try {
+          const res = await api.get(endpoint);
+          if (res.data?.data) apiData = res.data.data;
+        } catch (apiErr) {
+          // If admin endpoint failed, try student endpoint
+          if (isAdmin) {
+            try {
+              const res2 = await api.get(`/student/results/${id}`);
+              if (res2.data?.data) apiData = res2.data.data;
+            } catch (_) {}
+          }
+        }
+
+        if (apiData && isMounted) {
+          setResult({
+            id: apiData._id || id,
+            examTitle: apiData.examId?.title || 'AI Proctored Assessment',
+            studentName: apiData.studentId?.name || user?.name || sessionStorage.getItem('dp_student') || 'Student',
+            studentEmail: apiData.studentId?.email || user?.email || '',
+            score: apiData.score ?? 0,
+            totalMarks: apiData.totalMarks || apiData.examId?.totalMarks || 100,
+            passingMarks: apiData.examId?.passingMarks || 40,
+            percentage: apiData.percentage ?? (apiData.totalMarks > 0 ? (apiData.score / apiData.totalMarks) * 100 : 0),
+            isPassed: apiData.isPassed ?? (apiData.score >= (apiData.examId?.passingMarks || 40)),
+            correct: apiData.correct ?? 0,
+            wrong: apiData.wrong ?? 0,
+            skipped: apiData.skipped ?? 0,
+            totalQuestions: apiData.totalQuestions || apiData.answerBreakdown?.length || 0,
+            timeTaken: apiData.timeTaken || 0,
+            date: apiData.calculatedAt ? new Date(apiData.calculatedAt).toLocaleString() : new Date().toLocaleString(),
+            answerBreakdown: apiData.answerBreakdown || [],
+          });
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('API result fetch error, falling back to local DB:', err.message);
+      }
+
+      // 2. Fallback to Local Storage DB
+      try {
+        const localResults = DB.results.get();
+        const found = localResults.find(r => r.id === id);
+
+        if (found && isMounted) {
+          let breakdown = found.answerBreakdown || [];
+
+          // If answerBreakdown was not pre-calculated, build it from questions & answers
+          if (!breakdown.length) {
+            let questionsList = found.questions || [];
+            if (!questionsList.length) {
+              const ex = DB.exams.get().find(e => e.id === found.examId);
+              if (ex) {
+                questionsList = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
+              }
+              if (!questionsList.length) {
+                questionsList = DB.questions.get();
+              }
+            }
+
+            breakdown = questionsList.map((q, i) => {
+              const stuAns = found.answers?.[q.id] || null;
+              const isCor = stuAns === q.correctAnswer;
+              const qMarks = q.marks || 1;
+              return {
+                questionId: q.id || `q_${i + 1}`,
+                questionText: q.questionText,
+                options: q.options || {},
+                selectedOption: stuAns,
+                correctAnswer: q.correctAnswer,
+                isCorrect: isCor,
+                marks: isCor ? qMarks : 0,
+                maxMarks: qMarks,
+                explanation: q.explanation || '',
+              };
+            });
+          }
+
+          setResult({
+            id: found.id,
+            examTitle: found.examTitle || 'AI Proctored Assessment',
+            studentName: found.studentName || user?.name || 'Student',
+            score: found.score ?? 0,
+            totalMarks: found.totalMarks || 100,
+            passingMarks: found.passingMarks || 40,
+            percentage: found.percentage ?? (found.totalMarks > 0 ? Math.round((found.score / found.totalMarks) * 100) : 0),
+            isPassed: found.isPassed ?? (found.score >= 40),
+            correct: found.correct ?? breakdown.filter(b => b.isCorrect).length,
+            wrong: found.wrong ?? breakdown.filter(b => b.selectedOption && !b.isCorrect).length,
+            skipped: found.skipped ?? breakdown.filter(b => !b.selectedOption).length,
+            totalQuestions: found.totalQuestions || breakdown.length,
+            timeTaken: found.timeTaken || 0,
+            date: found.date || new Date().toLocaleString(),
+            answerBreakdown: breakdown,
+          });
+          setLoading(false);
+          return;
+        }
+
+        if (!found && isMounted) {
+          setError('Result not found.');
+          setLoading(false);
+        }
+      } catch (dbErr) {
+        if (isMounted) {
+          setError('Unable to load assessment result.');
+          setLoading(false);
+        }
+      }
+    };
+
+    loadResultData();
+
+    // Trap browser back button during review
     window.history.pushState(null, "", window.location.href);
     const handlePopState = () => {
       window.history.pushState(null, "", window.location.href);
-      toast.error('🚫 Exam finished. Back button is disabled.', { id: 'no-back-res' });
+      toast.error('🚫 Exam session completed. Use navigation buttons below.', { id: 'no-back-res' });
     };
     window.addEventListener('popstate', handlePopState);
 
     return () => {
+      isMounted = false;
       window.removeEventListener('popstate', handlePopState);
       stopGlobalWebcamStreams();
     };
-  }, [id]);
+  }, [id, isAdmin, user]);
 
-  if (!result) return <div className="center-page" style={{ minHeight: '100vh' }}><div className="spinner" /></div>;
+  if (loading) {
+    return (
+      <div className="page-wrapper">
+        <Header />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: '48px 32px', textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="spinner" style={{ width: 44, height: 44, borderWidth: 3, margin: '0 auto 20px', borderColor: 'var(--primary-light)', borderTopColor: 'transparent' }} />
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Loading Assessment Results</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Retrieving score summary and answer verification records...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const pct = result.totalMarks > 0 ? Math.round((result.score / result.totalMarks) * 100) : 0;
-  const passed = pct >= 50;
-  const isAdmin = sessionStorage.getItem('dp_admin') === 'true';
+  if (error || !result) {
+    return (
+      <div className="page-wrapper">
+        <Header />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: 48, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <XCircle size={52} style={{ color: 'var(--danger)', margin: '0 auto 20px', opacity: 0.8 }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Result Not Found</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 28, lineHeight: 1.6 }}>
+              {error || 'We could not locate this examination result record.'}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <button onClick={() => window.location.reload()} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+                <RefreshCw size={15} /> Retry
+              </button>
+              {isAdmin ? (
+                <Link to="/admin/dashboard" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
+                  <ArrowLeft size={15} /> Back to Admin Dashboard
+                </Link>
+              ) : (
+                <Link to="/student/dashboard" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
+                  Back to Dashboard
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const pct = Math.round(result.percentage || (result.totalMarks > 0 ? (result.score / result.totalMarks) * 100 : 0));
+  const passed = result.isPassed ?? (pct >= 40);
+  const questionsList = result.answerBreakdown || [];
 
   return (
     <div className="page-wrapper">
       <Header />
-      <main style={{ flex: 1, padding: '32px 20px', maxWidth: 840, margin: '0 auto', width: '100%' }}>
+      <main style={{ flex: 1, padding: '32px 20px 64px', maxWidth: 880, margin: '0 auto', width: '100%' }}>
         <div className="page-enter">
-          <div className="result-header-card" style={{ borderColor: passed ? 'rgba(16,185,129,.2)' : 'rgba(239,68,68,.2)', background: passed ? 'rgba(16,185,129,.04)' : 'rgba(239,68,68,.04)' }}>
-            <div className="result-trophy" style={{ background: passed ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)' }}>
-              {passed ? <Trophy size={36} style={{ color: 'var(--success)' }} /> : <XCircle size={36} style={{ color: 'var(--danger)' }} />}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <h2 style={{ fontSize: 24, fontWeight: 900, color: '#fff' }}>{pct}%</h2>
-                <span className={`badge ${passed ? 'badge-green' : 'badge-red'}`}>{passed ? 'PASSED' : 'FAILED'}</span>
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{result.studentName} · {result.score}/{result.totalMarks} marks · {result.date}</p>
-            </div>
+          {/* Top Navigation Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
             {isAdmin ? (
-              <Link to="/admin/dashboard" className="btn btn-primary btn-sm">
-                <ArrowLeft size={14} /> Back to Admin Dashboard
+              <Link
+                to="/admin/dashboard"
+                className="btn btn-primary btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', fontWeight: 600, borderRadius: 10 }}
+              >
+                <ArrowLeft size={16} /> Back to Admin Dashboard
               </Link>
             ) : (
-              <Link to="/" className="btn btn-secondary btn-sm">
-                <Home size={14} /> Home
-              </Link>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Link
+                  to="/student/dashboard"
+                  className="btn btn-primary btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', fontWeight: 600, borderRadius: 10 }}
+                >
+                  <ArrowLeft size={16} /> Back to Dashboard
+                </Link>
+                <Link
+                  to="/"
+                  className="btn btn-secondary btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10 }}
+                >
+                  <Home size={15} /> Home
+                </Link>
+              </div>
             )}
+
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Submitted on {result.date}
+            </span>
           </div>
 
-          <h3 className="section-label">Answer Review</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {questions.map((q, i) => {
-              const stuAns = result.answers?.[q.id];
-              const correct = stuAns === q.correctAnswer;
-              const skipped = !stuAns;
-              return (
-                <div key={q.id} className="card" style={{ padding: 22 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                        <span className="badge badge-orange" style={{ fontSize: 9 }}>Q{i + 1}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{q.marks} marks</span>
-                      </div>
-                      <p style={{ fontSize: 14, fontWeight: 600, color: '#fff', lineHeight: 1.5 }}>{q.questionText}</p>
-                    </div>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6, flexShrink: 0,
-                      background: correct ? 'rgba(16,185,129,.1)' : skipped ? 'rgba(255,255,255,.04)' : 'rgba(239,68,68,.1)',
-                      color: correct ? 'var(--success)' : skipped ? 'var(--text-muted)' : 'var(--danger)',
-                    }}>
-                      {correct ? '✓ Correct' : skipped ? '— Skipped' : '✗ Wrong'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    {Object.entries(q.options || {}).map(([k, v]) => {
-                      const isCor = q.correctAnswer === k;
-                      const isStu = stuAns === k && !correct;
-                      return (
-                        <div key={k} style={{
-                          padding: '8px 12px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8,
-                          border: `1px solid ${isCor ? 'rgba(16,185,129,.25)' : isStu ? 'rgba(239,68,68,.25)' : 'var(--border)'}`,
-                          background: isCor ? 'rgba(16,185,129,.06)' : isStu ? 'rgba(239,68,68,.06)' : 'transparent',
-                        }}>
-                          <span style={{
-                            minWidth: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: 10, fontWeight: 800,
-                            background: isCor ? 'rgba(16,185,129,.2)' : isStu ? 'rgba(239,68,68,.2)' : 'var(--bg-surface)',
-                            color: isCor ? 'var(--success)' : isStu ? 'var(--danger)' : 'var(--text-muted)'
-                          }}>{k}</span>
-                          <span style={{ fontSize: 12, color: isCor ? 'var(--success)' : isStu ? 'var(--danger)' : 'var(--text-secondary)', flex: 1 }}>{v}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {q.explanation && (
-                    <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(252,191,73,.04)', border: '1px solid rgba(252,191,73,.1)' }}>
-                      <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                        <span style={{ color: 'var(--accent)', fontWeight: 700 }}>Explanation: </span>{q.explanation}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          {/* Result Hero Header Card */}
+          <div
+            className="result-header-card"
+            style={{
+              borderColor: passed ? 'rgba(16,185,129,.3)' : 'rgba(239,68,68,.3)',
+              background: passed ? 'linear-gradient(135deg, rgba(16,185,129,.08), rgba(15,15,20,.95))' : 'linear-gradient(135deg, rgba(239,68,68,.08), rgba(15,15,20,.95))',
+              borderRadius: 20,
+              padding: '28px 24px',
+              marginBottom: 28
+            }}
+          >
+            <div className="result-trophy" style={{ background: passed ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.15)' }}>
+              {passed ? <Trophy size={40} style={{ color: 'var(--success)' }} /> : <XCircle size={40} style={{ color: 'var(--danger)' }} />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <h2 style={{ fontSize: 28, fontWeight: 900, color: '#fff', margin: 0 }}>{pct}%</h2>
+                <span className={`badge ${passed ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 12, padding: '4px 12px', fontWeight: 800 }}>
+                  {passed ? 'PASSED' : 'FAILED'}
+                </span>
+              </div>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: '0 0 4px 0' }}>{result.examTitle}</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+                Candidate: <strong style={{ color: '#fff' }}>{result.studentName}</strong> · Score: <strong style={{ color: passed ? 'var(--success)' : 'var(--danger)' }}>{result.score}/{result.totalMarks}</strong> marks
+              </p>
+            </div>
           </div>
+
+          {/* Performance Stats Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 32 }}>
+            <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 14 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Total Questions</p>
+              <p style={{ fontSize: 20, fontWeight: 800, color: '#fff', margin: 0 }}>{result.totalQuestions || questionsList.length}</p>
+            </div>
+            <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16,185,129,0.2)', borderRadius: 14 }}>
+              <p style={{ fontSize: 12, color: 'var(--success)', marginBottom: 4 }}>Correct</p>
+              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--success)', margin: 0 }}>{result.correct ?? questionsList.filter(q => q.isCorrect).length}</p>
+            </div>
+            <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239,68,68,0.2)', borderRadius: 14 }}>
+              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 4 }}>Incorrect</p>
+              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--danger)', margin: 0 }}>{result.wrong ?? questionsList.filter(q => q.selectedOption && !q.isCorrect).length}</p>
+            </div>
+            <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 14 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Unanswered</p>
+              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-secondary)', margin: 0 }}>{result.skipped ?? questionsList.filter(q => !q.selectedOption).length}</p>
+            </div>
+          </div>
+
+          {/* Answer Review Section Heading */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 12 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <BookOpen size={20} style={{ color: 'var(--primary-light)' }} /> Answer Review
+            </h3>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {questionsList.length} Question{questionsList.length !== 1 ? 's' : ''} Analyzed
+            </span>
+          </div>
+
+          {/* Questions Breakdown List */}
+          {questionsList.length === 0 ? (
+            <div className="card" style={{ padding: 40, textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 16 }}>
+              <AlertCircle size={36} style={{ color: 'var(--text-muted)', margin: '0 auto 12px' }} />
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14, margin: 0 }}>
+                No answer review is available for this assessment.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {questionsList.map((item, i) => {
+                const qText = item.questionText || item.questionId?.questionText || `Question ${i + 1}`;
+                const optionsObj = item.options || item.questionId?.options || {};
+                const stuAns = item.selectedOption;
+                const corAns = item.correctAnswer || item.questionId?.correctAnswer;
+                const isCor = item.isCorrect ?? (stuAns && stuAns === corAns);
+                const isSkipped = !stuAns;
+                const qMarks = item.maxMarks || item.marks || item.questionId?.marks || 1;
+                const earnedMarks = isCor ? qMarks : 0;
+                const explanationText = item.explanation || item.questionId?.explanation;
+
+                return (
+                  <div
+                    key={item.questionId?._id || item.questionId || i}
+                    className="card page-enter"
+                    style={{
+                      padding: '24px',
+                      background: 'rgba(18, 18, 24, 0.95)',
+                      border: `1px solid ${isCor ? 'rgba(16,185,129,0.25)' : isSkipped ? 'rgba(255,255,255,0.08)' : 'rgba(239,68,68,0.25)'}`,
+                      borderRadius: 18,
+                      boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)'
+                    }}
+                  >
+                    {/* Question Header */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, marginBottom: 16 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                          <span
+                            className="badge badge-orange"
+                            style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6, textTransform: 'uppercase' }}
+                          >
+                            QUESTION {i + 1}
+                          </span>
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+                            {earnedMarks} / {qMarks} mark{qMarks !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: '#ffffff', lineHeight: 1.6, margin: 0 }}>
+                          {qText}
+                        </p>
+                      </div>
+
+                      {/* Status Indicator Badge */}
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: '6px 12px',
+                          borderRadius: 8,
+                          flexShrink: 0,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: isCor ? 'rgba(16,185,129,0.12)' : isSkipped ? 'rgba(255,255,255,0.06)' : 'rgba(239,68,68,0.12)',
+                          color: isCor ? 'var(--success)' : isSkipped ? 'var(--text-muted)' : 'var(--danger)',
+                          border: `1px solid ${isCor ? 'rgba(16,185,129,0.3)' : isSkipped ? 'rgba(255,255,255,0.1)' : 'rgba(239,68,68,0.3)'}`
+                        }}
+                      >
+                        {isCor ? '✓ Correct' : isSkipped ? '— Not Answered' : '✕ Incorrect'}
+                      </span>
+                    </div>
+
+                    {/* Options Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10, marginBottom: explanationText ? 14 : 0 }}>
+                      {['A', 'B', 'C', 'D'].map((optKey) => {
+                        const optVal = optionsObj[optKey];
+                        if (optVal === undefined || optVal === null) return null;
+
+                        const isThisCorrect = corAns === optKey;
+                        const isStudentPick = stuAns === optKey;
+
+                        let optBg = 'rgba(255,255,255,0.02)';
+                        let optBorder = 'rgba(255,255,255,0.06)';
+                        let optColor = 'var(--text-secondary)';
+                        let badgeBg = 'rgba(255,255,255,0.06)';
+                        let badgeColor = 'var(--text-muted)';
+
+                        if (isThisCorrect) {
+                          optBg = 'rgba(16,185,129,0.08)';
+                          optBorder = 'rgba(16,185,129,0.4)';
+                          optColor = '#ffffff';
+                          badgeBg = 'var(--success)';
+                          badgeColor = '#09090b';
+                        } else if (isStudentPick && !isThisCorrect) {
+                          optBg = 'rgba(239,68,68,0.08)';
+                          optBorder = 'rgba(239,68,68,0.4)';
+                          optColor = '#ffffff';
+                          badgeBg = 'var(--danger)';
+                          badgeColor = '#ffffff';
+                        }
+
+                        return (
+                          <div
+                            key={optKey}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: 10,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 12,
+                              background: optBg,
+                              border: `1px solid ${optBorder}`,
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: 6,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 11,
+                                fontWeight: 800,
+                                background: badgeBg,
+                                color: badgeColor,
+                                flexShrink: 0
+                              }}
+                            >
+                              {optKey}
+                            </span>
+                            <span style={{ fontSize: 13, color: optColor, flex: 1, lineHeight: 1.4 }}>
+                              {optVal}
+                            </span>
+                            {isThisCorrect && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Check size={14} /> Correct
+                              </span>
+                            )}
+                            {isStudentPick && !isThisCorrect && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <X size={14} /> Your Choice
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Explanation Box */}
+                    {explanationText && (
+                      <div
+                        style={{
+                          marginTop: 14,
+                          padding: '12px 16px',
+                          borderRadius: 10,
+                          background: 'rgba(245, 158, 11, 0.05)',
+                          border: '1px solid rgba(245, 158, 11, 0.2)',
+                          display: 'flex',
+                          gap: 10,
+                          alignItems: 'flex-start'
+                        }}
+                      >
+                        <Sparkles size={16} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }} />
+                        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                          <strong style={{ color: 'var(--warning)' }}>Explanation: </strong>
+                          {explanationText}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </main>
     </div>

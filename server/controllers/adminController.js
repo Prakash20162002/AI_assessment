@@ -329,6 +329,26 @@ const getAllResults = async (req, res, next) => {
   }
 };
 
+// @desc    Get single result details for admin review
+// @route   GET /api/admin/results/:id
+const getResultById = async (req, res, next) => {
+  try {
+    const result = await Result.findById(req.params.id)
+      .populate('studentId', 'name email')
+      .populate('examId', 'title duration totalMarks passingMarks')
+      .populate('sessionId', 'warningCount status startedAt submittedAt')
+      .populate('answerBreakdown.questionId', 'questionText options marks explanation');
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Result not found' });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get cheat logs
 // @route   GET /api/admin/cheat-logs
 const getCheatLogs = async (req, res, next) => {
@@ -575,6 +595,7 @@ module.exports = {
   deleteQuestion,
   getDashboardStats,
   getAllResults,
+  getResultById,
   getCheatLogs,
   getActiveSessions,
   downloadExcelReport,

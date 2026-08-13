@@ -17,6 +17,7 @@ const {
   deleteQuestion,
   getDashboardStats,
   getAllResults,
+  getResultById,
   getCheatLogs,
   getActiveSessions,
   downloadExcelReport,
@@ -62,6 +63,7 @@ router.route('/questions/:id').put(updateQuestion).delete(deleteQuestion);
 // Monitoring & results
 router.get('/sessions/active', getActiveSessions);
 router.get('/results', getAllResults);
+router.get('/results/:id', getResultById);
 router.get('/cheat-logs', getCheatLogs);
 
 // Reports

@@ -3,7 +3,7 @@
  * Inspired by modern, high-end SaaS designs (WorkAngel, Stripe, Resend)
  */
 
-const { LOGO_BASE64 } = require('./logoData');
+const PUBLIC_LOGO_URL = 'https://ai-assessment-beta.vercel.app/logo.png';
 const getClientUrl = () => process.env.CLIENT_URL || 'https://ai-assessment-beta.vercel.app/';
 
 /**
@@ -23,8 +23,8 @@ const renderBaseLayout = ({ name, mainHeading, contentHtml }) => {
         .email-card-container { max-width: 560px; margin: 0 auto; }
         
         /* Top Badge */
-        .brand-logo-badge { width: 56px; height: 56px; margin: 0 auto 20px auto; background: linear-gradient(135deg, #0284c7 0%, #2563eb 50%, #4f46e5 100%); border-radius: 50%; text-align: center; line-height: 56px; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3); }
-        .brand-logo-badge span { color: #ffffff; font-size: 26px; font-weight: 900; }
+        .brand-logo-wrap { text-align: center; margin: 0 auto 20px auto; }
+        .brand-logo-wrap img { max-height: 48px; max-width: 200px; width: auto; height: auto; display: block; margin: 0 auto; border: 0; outline: none; }
         
         /* Main Heading */
         .header-greeting { font-size: 26px; font-weight: 300; color: #1e293b; text-align: center; margin: 0 0 28px 0; line-height: 1.35; letter-spacing: -0.4px; }
@@ -62,8 +62,8 @@ const renderBaseLayout = ({ name, mainHeading, contentHtml }) => {
         <div class="email-card-container">
           
           <!-- Top Logo Badge -->
-          <div class="brand-logo-badge">
-            <span>W</span>
+          <div class="brand-logo-wrap">
+            <img src="${PUBLIC_LOGO_URL}" alt="DevPhoeniX Technologies LLP" style="max-height: 48px; max-width: 200px; width: auto; height: auto; display: block; margin: 0 auto; border: 0; outline: none; text-decoration: none;" />
           </div>
 
           <!-- Greeting Headline -->
@@ -199,7 +199,7 @@ const independenceDayOtpTemplate = ({
         <tr>
           <!-- Official DevPhoeniX Transparent Logo -->
           <td align="left" valign="middle">
-            <img src="${LOGO_BASE64}" alt="DevPhoeniX Logo" class="header-logo-img" style="max-height: 48px; max-width: 250px; width: auto; height: auto; object-fit: contain;">
+            <img src="${PUBLIC_LOGO_URL}" alt="DevPhoeniX Technologies LLP" class="header-logo-img" style="max-height: 48px; max-width: 220px; width: auto; height: auto; display: block; border: 0; outline: none; text-decoration: none; object-fit: contain;">
           </td>
 
           <!-- India Flag Edition Pill Badge -->
@@ -446,7 +446,7 @@ const independenceDayOtpTemplate = ({
         <tr>
           <td align="center">
             <div style="margin-bottom: 16px; text-align: center;">
-              <img src="${LOGO_BASE64}" alt="DevPhoeniX Logo" style="max-height: 52px; max-width: 280px; width: auto; height: auto; margin: 0 auto; display: block; object-fit: contain;">
+              <img src="${PUBLIC_LOGO_URL}" alt="DevPhoeniX Technologies LLP" style="max-height: 48px; max-width: 220px; width: auto; height: auto; margin: 0 auto; display: block; border: 0; outline: none; text-decoration: none; object-fit: contain;">
             </div>
 
             <div style="font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #94A3B8; margin-bottom: 22px;">

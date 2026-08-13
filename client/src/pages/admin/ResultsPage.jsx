@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Download, Search, AlertCircle, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Download, Search, AlertCircle, FileText, Eye } from 'lucide-react';
 import api from '../../services/api';
 
 const ResultsPage = () => {
@@ -133,7 +134,10 @@ const ResultsPage = () => {
                     <td style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
                        {new Date(r.calculatedAt).toLocaleString()}
                     </td>
-                    <td>
+                    <td style={{ display: 'flex', gap: '8px' }}>
+                      <Link to={`/admin/results/${r._id}`} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                        <Eye size={14} /> Review
+                      </Link>
                       <button onClick={() => handleDownloadPDF(r._id)} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
                         <FileText size={14} /> PDF
                       </button>

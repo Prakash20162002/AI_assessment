@@ -1989,13 +1989,16 @@ function ThankYouPage() {
 ═══════════════════════════════════════════════════════ */
 function ResultPage() {
   const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
+  const isAdminRoute = location.pathname.startsWith('/admin/results') || isAdmin;
+
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const isAdmin = user?.role === 'admin' || sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
+  const [answerFilter, setAnswerFilter] = useState('all');
 
   useEffect(() => {
     stopGlobalWebcamStreams();
@@ -2027,11 +2030,17 @@ function ResultPage() {
         }
 
         if (apiData && isMounted) {
+          const sessionObj = apiData.sessionId || {};
+          const isVoided = sessionObj.status === 'voided' || (sessionObj.warningCount >= 3);
+          const warnings = sessionObj.warningCount || 0;
+
           setResult({
             id: apiData._id || id,
+            examId: apiData.examId?._id || apiData.examId || '',
             examTitle: apiData.examId?.title || 'AI Proctored Assessment',
+            subjectName: apiData.examId?.subject || apiData.subject || 'General Assessment',
             studentName: apiData.studentId?.name || user?.name || sessionStorage.getItem('dp_student') || 'Student',
-            studentEmail: apiData.studentId?.email || user?.email || '',
+            studentEmail: apiData.studentId?.email || user?.email || 'N/A',
             score: apiData.score ?? 0,
             totalMarks: apiData.totalMarks || apiData.examId?.totalMarks || 100,
             passingMarks: apiData.examId?.passingMarks || 40,
@@ -2044,6 +2053,10 @@ function ResultPage() {
             timeTaken: apiData.timeTaken || 0,
             date: apiData.calculatedAt ? new Date(apiData.calculatedAt).toLocaleString() : new Date().toLocaleString(),
             answerBreakdown: apiData.answerBreakdown || [],
+            warningCount: warnings,
+            cheated: isVoided,
+            status: isVoided ? 'Disqualified' : (apiData.isPassed ? 'Passed' : 'Failed'),
+            proctorLogs: apiData.proctorLogs || [],
           });
           setLoading(false);
           return;
@@ -2091,10 +2104,17 @@ function ResultPage() {
             });
           }
 
+          const exObj = DB.exams.get().find(e => e.id === found.examId);
+          const subObj = exObj ? DB.subjects.get().find(s => s.id === exObj.subjectId) : null;
+
           setResult({
             id: found.id,
+            examId: found.examId || '',
             examTitle: found.examTitle || 'AI Proctored Assessment',
+            subjectName: subObj?.name || 'General Assessment',
+            subjectColor: subObj?.color || '#e63946',
             studentName: found.studentName || user?.name || 'Student',
+            studentEmail: found.studentEmail || user?.email || (sessionStorage.getItem('dp_user') ? JSON.parse(sessionStorage.getItem('dp_user')).email : 'student@devphoenix.com'),
             score: found.score ?? 0,
             totalMarks: found.totalMarks || 100,
             passingMarks: found.passingMarks || 40,
@@ -2107,6 +2127,12 @@ function ResultPage() {
             timeTaken: found.timeTaken || 0,
             date: found.date || new Date().toLocaleString(),
             answerBreakdown: breakdown,
+            warningCount: found.warnings || 0,
+            cheated: !!found.cheated,
+            status: found.status || (found.cheated ? 'Disqualified' : (found.isPassed ? 'Passed' : 'Failed')),
+            proctorLogs: found.proctorLogs || (found.warnings > 0 ? [
+              { timestamp: found.date, type: 'Tab Switch / Face Detection Warning', description: `${found.warnings} warning(s) triggered during examination.` }
+            ] : []),
           });
           setLoading(false);
           return;
@@ -2141,37 +2167,58 @@ function ResultPage() {
     };
   }, [id, isAdmin, user]);
 
+  // Loading Skeleton State
   if (loading) {
     return (
-      <div className="page-wrapper">
+      <div className="page-wrapper" style={{ background: '#09090b', minHeight: '100vh' }}>
         <Header />
-        <div className="center-page">
-          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: '48px 32px', textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
-            <div className="spinner" style={{ width: 44, height: 44, borderWidth: 3, margin: '0 auto 20px', borderColor: 'var(--primary-light)', borderTopColor: 'transparent' }} />
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Loading Assessment Results</h3>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Retrieving score summary and answer verification records...</p>
+        <main style={{ flex: 1, padding: '32px 20px 64px', maxWidth: 940, margin: '0 auto', width: '100%' }}>
+          <div className="page-enter" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Top Bar Skeleton */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ width: 180, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.06)', animation: 'pulse 1.5s infinite' }} />
+              <div style={{ width: 140, height: 20, borderRadius: 6, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s infinite' }} />
+            </div>
+
+            {/* Hero Card Skeleton */}
+            <div style={{ height: 140, borderRadius: 20, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', animation: 'pulse 1.5s infinite' }} />
+
+            {/* Stats Grid Skeleton */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} style={{ height: 80, borderRadius: 14, background: 'rgba(255,255,255,0.04)', animation: 'pulse 1.5s infinite' }} />
+              ))}
+            </div>
+
+            {/* Question Cards Skeletons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {[1, 2, 3].map(i => (
+                <div key={i} style={{ height: 180, borderRadius: 16, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', animation: 'pulse 1.5s infinite' }} />
+              ))}
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
 
+  // Error State
   if (error || !result) {
     return (
-      <div className="page-wrapper">
+      <div className="page-wrapper" style={{ background: '#09090b', minHeight: '100vh' }}>
         <Header />
         <div className="center-page">
-          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: 48, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
-            <XCircle size={52} style={{ color: 'var(--danger)', margin: '0 auto 20px', opacity: 0.8 }} />
+          <div className="card page-enter" style={{ maxWidth: 460, width: '100%', padding: '44px 32px', textAlign: 'center', background: 'rgba(18, 18, 24, 0.95)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <XCircle size={52} style={{ color: 'var(--danger)', margin: '0 auto 18px', opacity: 0.9 }} />
             <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Result Not Found</h2>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 28, lineHeight: 1.6 }}>
-              {error || 'We could not locate this examination result record.'}
+              {error || 'Unable to locate the specified examination result record in the database.'}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <button onClick={() => window.location.reload()} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
                 <RefreshCw size={15} /> Retry
               </button>
-              {isAdmin ? (
+              {isAdminRoute ? (
                 <Link to="/admin/dashboard" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
                   <ArrowLeft size={15} /> Back to Admin Dashboard
                 </Link>
@@ -2188,117 +2235,362 @@ function ResultPage() {
   }
 
   const pct = Math.round(result.percentage || (result.totalMarks > 0 ? (result.score / result.totalMarks) * 100 : 0));
-  const passed = result.isPassed ?? (pct >= 40);
+  const isDisqualified = result.cheated || result.status === 'Disqualified' || result.warningCount >= 3;
+  const passed = !isDisqualified && (result.isPassed ?? (pct >= 40));
   const questionsList = result.answerBreakdown || [];
 
+  // Filter calculations
+  const totalQ = questionsList.length;
+  const correctCount = questionsList.filter(q => q.isCorrect).length;
+  const wrongCount = questionsList.filter(q => q.selectedOption && !q.isCorrect).length;
+  const skippedCount = questionsList.filter(q => !q.selectedOption).length;
+
+  const filteredQuestions = questionsList.filter(q => {
+    if (answerFilter === 'correct') return q.isCorrect;
+    if (answerFilter === 'incorrect') return q.selectedOption && !q.isCorrect;
+    if (answerFilter === 'skipped') return !q.selectedOption;
+    return true;
+  });
+
   return (
-    <div className="page-wrapper">
+    <div className="page-wrapper" style={{ background: '#09090b', minHeight: '100vh' }}>
       <Header />
-      <main style={{ flex: 1, padding: '32px 20px 64px', maxWidth: 880, margin: '0 auto', width: '100%' }}>
+      <main style={{ flex: 1, padding: '28px 20px 64px', maxWidth: 940, margin: '0 auto', width: '100%' }}>
         <div className="page-enter">
-          {/* Top Navigation Bar */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-            {isAdmin ? (
-              <Link
-                to="/admin/dashboard"
-                className="btn btn-primary btn-sm"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', fontWeight: 600, borderRadius: 10 }}
-              >
-                <ArrowLeft size={16} /> Back to Admin Dashboard
-              </Link>
+          
+          {/* Top Navigation & Breadcrumb */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            {isAdminRoute ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Link
+                  to="/admin/dashboard"
+                  className="btn btn-secondary btn-sm"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 16px',
+                    fontWeight: 600,
+                    borderRadius: 10,
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: '#ffffff',
+                    textDecoration: 'none'
+                  }}
+                >
+                  <ArrowLeft size={15} /> Back to Proctor Audit Log
+                </Link>
+                <span className="badge badge-orange" style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px' }}>
+                  ADMIN AUDIT REVIEW
+                </span>
+              </div>
             ) : (
               <div style={{ display: 'flex', gap: 10 }}>
                 <Link
                   to="/student/dashboard"
                   className="btn btn-primary btn-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', fontWeight: 600, borderRadius: 10 }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontWeight: 600, borderRadius: 10 }}
                 >
-                  <ArrowLeft size={16} /> Back to Dashboard
+                  <ArrowLeft size={15} /> Back to Dashboard
                 </Link>
                 <Link
                   to="/"
                   className="btn btn-secondary btn-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10 }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10 }}
                 >
-                  <Home size={15} /> Home
+                  <Home size={14} /> Home
                 </Link>
               </div>
             )}
 
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-              Submitted on {result.date}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Submitted: <strong style={{ color: 'var(--text-secondary)' }}>{result.date}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Student & Examination Details Card */}
+          <div
+            className="card"
+            style={{
+              background: 'rgba(18, 18, 24, 0.95)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 18,
+              padding: '24px 28px',
+              marginBottom: 20,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.35)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(99, 102, 241, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary-light)' }}>
+                  <UserCheck size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: 0 }}>
+                    {result.studentName}
+                  </h3>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                    {result.studentEmail}
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {result.subjectName && (
+                  <span className="badge badge-orange" style={{ fontSize: 11, fontWeight: 700, padding: '4px 12px' }}>
+                    {result.subjectName}
+                  </span>
+                )}
+                <span className="badge badge-blue" style={{ fontSize: 11, fontFamily: 'monospace', padding: '4px 10px' }}>
+                  ID: {result.id.slice(0, 16)}...
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+              <div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3, fontWeight: 600 }}>Assessment Title</p>
+                <p style={{ fontSize: 14, color: '#fff', fontWeight: 600, margin: 0 }}>{result.examTitle}</p>
+              </div>
+              <div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3, fontWeight: 600 }}>Exam Duration</p>
+                <p style={{ fontSize: 14, color: '#fff', fontWeight: 600, margin: 0 }}>
+                  {result.timeTaken ? `${Math.floor(result.timeTaken / 60)}m ${result.timeTaken % 60}s` : 'Completed within limit'}
+                </p>
+              </div>
+              <div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3, fontWeight: 600 }}>Attempt Status</p>
+                <p style={{ fontSize: 14, fontWeight: 700, margin: 0, color: isDisqualified ? 'var(--danger)' : passed ? 'var(--success)' : 'var(--danger)' }}>
+                  {isDisqualified ? 'Disqualified (Voided)' : passed ? 'Passed (Qualified)' : 'Failed (Needs Retake)'}
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Result Hero Header Card */}
           <div
             className="result-header-card"
             style={{
-              borderColor: passed ? 'rgba(16,185,129,.3)' : 'rgba(239,68,68,.3)',
-              background: passed ? 'linear-gradient(135deg, rgba(16,185,129,.08), rgba(15,15,20,.95))' : 'linear-gradient(135deg, rgba(239,68,68,.08), rgba(15,15,20,.95))',
+              borderColor: isDisqualified ? 'rgba(239,68,68,.4)' : passed ? 'rgba(16,185,129,.35)' : 'rgba(239,68,68,.35)',
+              background: isDisqualified
+                ? 'linear-gradient(135deg, rgba(239,68,68,.12), rgba(15,15,20,.95))'
+                : passed
+                  ? 'linear-gradient(135deg, rgba(16,185,129,.1), rgba(15,15,20,.95))'
+                  : 'linear-gradient(135deg, rgba(239,68,68,.1), rgba(15,15,20,.95))',
               borderRadius: 20,
               padding: '28px 24px',
-              marginBottom: 28
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 20,
+              flexWrap: 'wrap'
             }}
           >
-            <div className="result-trophy" style={{ background: passed ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.15)' }}>
-              {passed ? <Trophy size={40} style={{ color: 'var(--success)' }} /> : <XCircle size={40} style={{ color: 'var(--danger)' }} />}
+            <div
+              className="result-trophy"
+              style={{
+                background: isDisqualified ? 'rgba(239,68,68,.18)' : passed ? 'rgba(16,185,129,.18)' : 'rgba(239,68,68,.18)',
+                width: 72,
+                height: 72,
+                borderRadius: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              {isDisqualified ? (
+                <ShieldAlert size={38} style={{ color: 'var(--danger)' }} />
+              ) : passed ? (
+                <Trophy size={38} style={{ color: 'var(--success)' }} />
+              ) : (
+                <XCircle size={38} style={{ color: 'var(--danger)' }} />
+              )}
             </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                <h2 style={{ fontSize: 28, fontWeight: 900, color: '#fff', margin: 0 }}>{pct}%</h2>
-                <span className={`badge ${passed ? 'badge-green' : 'badge-red'}`} style={{ fontSize: 12, padding: '4px 12px', fontWeight: 800 }}>
-                  {passed ? 'PASSED' : 'FAILED'}
+
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+                <h2 style={{ fontSize: 32, fontWeight: 900, color: '#fff', margin: 0 }}>
+                  {isDisqualified ? '0%' : `${pct}%`}
+                </h2>
+                <span
+                  className={`badge ${isDisqualified ? 'badge-red' : passed ? 'badge-green' : 'badge-red'}`}
+                  style={{ fontSize: 12, padding: '4px 14px', fontWeight: 800, textTransform: 'uppercase' }}
+                >
+                  {isDisqualified ? 'DISQUALIFIED' : passed ? 'PASSED' : 'FAILED'}
                 </span>
               </div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: '0 0 4px 0' }}>{result.examTitle}</h3>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
-                Candidate: <strong style={{ color: '#fff' }}>{result.studentName}</strong> · Score: <strong style={{ color: passed ? 'var(--success)' : 'var(--danger)' }}>{result.score}/{result.totalMarks}</strong> marks
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                Score: <strong style={{ color: isDisqualified ? 'var(--danger)' : passed ? 'var(--success)' : 'var(--danger)', fontSize: 16 }}>
+                  {isDisqualified ? 0 : result.score} / {result.totalMarks}
+                </strong> Marks Awarded · Passing Threshold: <strong>{result.passingMarks || 40} Marks</strong>
               </p>
             </div>
           </div>
 
+          {/* Proctoring & Integrity Audit Summary Card */}
+          <div
+            className="card"
+            style={{
+              padding: '20px 24px',
+              borderRadius: 16,
+              marginBottom: 24,
+              background: isDisqualified
+                ? 'rgba(239, 68, 68, 0.06)'
+                : result.warningCount > 0
+                  ? 'rgba(245, 158, 11, 0.05)'
+                  : 'rgba(16, 185, 129, 0.04)',
+              border: `1.5px solid ${isDisqualified ? 'rgba(239, 68, 68, 0.25)' : result.warningCount > 0 ? 'rgba(245, 158, 11, 0.25)' : 'rgba(16, 185, 129, 0.2)'}`
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: result.proctorLogs?.length ? 14 : 0, flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Shield size={20} style={{ color: isDisqualified ? 'var(--danger)' : result.warningCount > 0 ? 'var(--warning)' : 'var(--success)' }} />
+                <div>
+                  <h4 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0 }}>
+                    Proctoring & Integrity Summary
+                  </h4>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                    AI Proctor Warnings: <strong style={{ color: isDisqualified ? 'var(--danger)' : result.warningCount > 0 ? 'var(--warning)' : 'var(--success)' }}>{result.warningCount} / {MAX_WARNINGS} Max</strong>
+                  </p>
+                </div>
+              </div>
+
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 800,
+                  padding: '4px 12px',
+                  borderRadius: 20,
+                  background: isDisqualified ? 'rgba(239,68,68,0.15)' : result.warningCount > 0 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.15)',
+                  color: isDisqualified ? 'var(--danger)' : result.warningCount > 0 ? 'var(--warning)' : 'var(--success)'
+                }}
+              >
+                {isDisqualified ? 'DISQUALIFICATION RECORDED' : result.warningCount > 0 ? 'WARNINGS LOGGED' : 'CLEAN AUDIT'}
+              </span>
+            </div>
+
+            {isDisqualified && (
+              <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', marginBottom: 12 }}>
+                <p style={{ fontSize: 12, color: '#fca5a5', margin: 0, lineHeight: 1.5 }}>
+                  ⚠️ <strong>Disqualification Reason:</strong> The candidate exceeded the allowable integrity threshold ({MAX_WARNINGS} proctor warnings) during active assessment monitoring.
+                </p>
+              </div>
+            )}
+
+            {result.proctorLogs && result.proctorLogs.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>
+                  Audit Event Timeline:
+                </p>
+                {result.proctorLogs.map((log, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      background: 'rgba(0,0,0,0.3)',
+                      border: '1px solid rgba(255,255,255,0.05)',
+                      fontSize: 12
+                    }}
+                  >
+                    <span style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <AlertTriangle size={13} style={{ color: 'var(--warning)' }} />
+                      {log.type || log.eventType || 'Proctor Warning'}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'monospace' }}>
+                      {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : log.time || 'Logged'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : !isDisqualified && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, marginTop: 4 }}>
+                ✓ Clean session — No cheating or proctoring warnings recorded during this examination.
+              </p>
+            )}
+          </div>
+
           {/* Performance Stats Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 32 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 28 }}>
             <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 14 }}>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Total Questions</p>
-              <p style={{ fontSize: 20, fontWeight: 800, color: '#fff', margin: 0 }}>{result.totalQuestions || questionsList.length}</p>
+              <p style={{ fontSize: 22, fontWeight: 800, color: '#fff', margin: 0 }}>{totalQ}</p>
             </div>
             <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(16,185,129,0.05)', borderColor: 'rgba(16,185,129,0.2)', borderRadius: 14 }}>
-              <p style={{ fontSize: 12, color: 'var(--success)', marginBottom: 4 }}>Correct</p>
-              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--success)', margin: 0 }}>{result.correct ?? questionsList.filter(q => q.isCorrect).length}</p>
+              <p style={{ fontSize: 12, color: 'var(--success)', marginBottom: 4 }}>Correct Answers</p>
+              <p style={{ fontSize: 22, fontWeight: 800, color: 'var(--success)', margin: 0 }}>{correctCount}</p>
             </div>
             <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(239,68,68,0.05)', borderColor: 'rgba(239,68,68,0.2)', borderRadius: 14 }}>
-              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 4 }}>Incorrect</p>
-              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--danger)', margin: 0 }}>{result.wrong ?? questionsList.filter(q => q.selectedOption && !q.isCorrect).length}</p>
+              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 4 }}>Incorrect Answers</p>
+              <p style={{ fontSize: 22, fontWeight: 800, color: 'var(--danger)', margin: 0 }}>{wrongCount}</p>
             </div>
             <div className="card" style={{ padding: '16px', textAlign: 'center', background: 'rgba(255,255,255,0.03)', borderRadius: 14 }}>
               <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Unanswered</p>
-              <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--text-secondary)', margin: 0 }}>{result.skipped ?? questionsList.filter(q => !q.selectedOption).length}</p>
+              <p style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-secondary)', margin: 0 }}>{skippedCount}</p>
             </div>
           </div>
 
-          {/* Answer Review Section Heading */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 12 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <BookOpen size={20} style={{ color: 'var(--primary-light)' }} /> Answer Review
-            </h3>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {questionsList.length} Question{questionsList.length !== 1 ? 's' : ''} Analyzed
-            </span>
+          {/* Answer Review Filter & Heading */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <BookOpen size={20} style={{ color: 'var(--primary-light)' }} /> Detailed Answer Review
+              </h3>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
+                Question-by-question scoring and candidate option breakdown
+              </p>
+            </div>
+
+            {/* Filter Tabs */}
+            <div style={{ display: 'flex', gap: 6, background: 'rgba(255,255,255,0.04)', padding: 4, borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                onClick={() => setAnswerFilter('all')}
+                className={`btn btn-sm ${answerFilter === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8 }}
+              >
+                All ({totalQ})
+              </button>
+              <button
+                onClick={() => setAnswerFilter('correct')}
+                className={`btn btn-sm ${answerFilter === 'correct' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, color: answerFilter === 'correct' ? '#fff' : 'var(--success)' }}
+              >
+                Correct ({correctCount})
+              </button>
+              <button
+                onClick={() => setAnswerFilter('incorrect')}
+                className={`btn btn-sm ${answerFilter === 'incorrect' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, color: answerFilter === 'incorrect' ? '#fff' : 'var(--danger)' }}
+              >
+                Incorrect ({wrongCount})
+              </button>
+              <button
+                onClick={() => setAnswerFilter('skipped')}
+                className={`btn btn-sm ${answerFilter === 'skipped' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, color: answerFilter === 'skipped' ? '#fff' : 'var(--text-muted)' }}
+              >
+                Not Answered ({skippedCount})
+              </button>
+            </div>
           </div>
 
           {/* Questions Breakdown List */}
-          {questionsList.length === 0 ? (
-            <div className="card" style={{ padding: 40, textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 16 }}>
-              <AlertCircle size={36} style={{ color: 'var(--text-muted)', margin: '0 auto 12px' }} />
+          {filteredQuestions.length === 0 ? (
+            <div className="card" style={{ padding: 48, textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 16 }}>
+              <AlertCircle size={40} style={{ color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.6 }} />
               <p style={{ color: 'var(--text-secondary)', fontSize: 14, margin: 0 }}>
-                No answer review is available for this assessment.
+                No questions found under the "{answerFilter}" filter.
               </p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-              {questionsList.map((item, i) => {
+              {filteredQuestions.map((item, i) => {
                 const qText = item.questionText || item.questionId?.questionText || `Question ${i + 1}`;
                 const optionsObj = item.options || item.questionId?.options || {};
                 const stuAns = item.selectedOption;
@@ -2309,30 +2601,34 @@ function ResultPage() {
                 const earnedMarks = isCor ? qMarks : 0;
                 const explanationText = item.explanation || item.questionId?.explanation;
 
+                // Find original question index in overall list
+                const originalIndex = questionsList.findIndex(q => (q.questionId?._id || q.questionId || q.questionText) === (item.questionId?._id || item.questionId || item.questionText));
+                const qNumber = originalIndex !== -1 ? originalIndex + 1 : i + 1;
+
                 return (
                   <div
                     key={item.questionId?._id || item.questionId || i}
                     className="card page-enter"
                     style={{
-                      padding: '24px',
+                      padding: '24px 28px',
                       background: 'rgba(18, 18, 24, 0.95)',
-                      border: `1px solid ${isCor ? 'rgba(16,185,129,0.25)' : isSkipped ? 'rgba(255,255,255,0.08)' : 'rgba(239,68,68,0.25)'}`,
+                      border: `1.5px solid ${isCor ? 'rgba(16,185,129,0.3)' : isSkipped ? 'rgba(255,255,255,0.08)' : 'rgba(239,68,68,0.3)'}`,
                       borderRadius: 18,
                       boxShadow: '0 10px 30px -10px rgba(0,0,0,0.5)'
                     }}
                   >
                     {/* Question Header */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, marginBottom: 16 }}>
-                      <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 260 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                           <span
                             className="badge badge-orange"
-                            style={{ fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 6, textTransform: 'uppercase' }}
+                            style={{ fontSize: 10.5, fontWeight: 800, padding: '3px 10px', borderRadius: 6, textTransform: 'uppercase' }}
                           >
-                            QUESTION {i + 1}
+                            QUESTION {qNumber}
                           </span>
                           <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
-                            {earnedMarks} / {qMarks} mark{qMarks !== 1 ? 's' : ''}
+                            Awarded: <strong style={{ color: isCor ? 'var(--success)' : 'var(--danger)' }}>{earnedMarks}</strong> / {qMarks} mark{qMarks !== 1 ? 's' : ''}
                           </span>
                         </div>
                         <p style={{ fontSize: 15, fontWeight: 600, color: '#ffffff', lineHeight: 1.6, margin: 0 }}>
@@ -2345,15 +2641,15 @@ function ResultPage() {
                         style={{
                           fontSize: 12,
                           fontWeight: 800,
-                          padding: '6px 12px',
+                          padding: '6px 14px',
                           borderRadius: 8,
                           flexShrink: 0,
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 6,
-                          background: isCor ? 'rgba(16,185,129,0.12)' : isSkipped ? 'rgba(255,255,255,0.06)' : 'rgba(239,68,68,0.12)',
+                          background: isCor ? 'rgba(16,185,129,0.14)' : isSkipped ? 'rgba(255,255,255,0.06)' : 'rgba(239,68,68,0.14)',
                           color: isCor ? 'var(--success)' : isSkipped ? 'var(--text-muted)' : 'var(--danger)',
-                          border: `1px solid ${isCor ? 'rgba(16,185,129,0.3)' : isSkipped ? 'rgba(255,255,255,0.1)' : 'rgba(239,68,68,0.3)'}`
+                          border: `1px solid ${isCor ? 'rgba(16,185,129,0.35)' : isSkipped ? 'rgba(255,255,255,0.12)' : 'rgba(239,68,68,0.35)'}`
                         }}
                       >
                         {isCor ? '✓ Correct' : isSkipped ? '— Not Answered' : '✕ Incorrect'}
@@ -2376,14 +2672,14 @@ function ResultPage() {
                         let badgeColor = 'var(--text-muted)';
 
                         if (isThisCorrect) {
-                          optBg = 'rgba(16,185,129,0.08)';
-                          optBorder = 'rgba(16,185,129,0.4)';
+                          optBg = 'rgba(16,185,129,0.1)';
+                          optBorder = 'rgba(16,185,129,0.5)';
                           optColor = '#ffffff';
                           badgeBg = 'var(--success)';
                           badgeColor = '#09090b';
                         } else if (isStudentPick && !isThisCorrect) {
-                          optBg = 'rgba(239,68,68,0.08)';
-                          optBorder = 'rgba(239,68,68,0.4)';
+                          optBg = 'rgba(239,68,68,0.1)';
+                          optBorder = 'rgba(239,68,68,0.5)';
                           optColor = '#ffffff';
                           badgeBg = 'var(--danger)';
                           badgeColor = '#ffffff';
@@ -2393,7 +2689,7 @@ function ResultPage() {
                           <div
                             key={optKey}
                             style={{
-                              padding: '12px 14px',
+                              padding: '12px 16px',
                               borderRadius: 10,
                               display: 'flex',
                               alignItems: 'center',
@@ -2420,17 +2716,22 @@ function ResultPage() {
                             >
                               {optKey}
                             </span>
-                            <span style={{ fontSize: 13, color: optColor, flex: 1, lineHeight: 1.4 }}>
+                            <span style={{ fontSize: 13.5, color: optColor, flex: 1, lineHeight: 1.4 }}>
                               {optVal}
                             </span>
-                            {isThisCorrect && (
-                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <Check size={14} /> Correct
+                            {isThisCorrect && !isStudentPick && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                <Check size={14} /> Correct Answer
                               </span>
                             )}
                             {isStudentPick && !isThisCorrect && (
-                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <X size={14} /> Your Choice
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--danger)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                <X size={14} /> Student Answer
+                              </span>
+                            )}
+                            {isStudentPick && isThisCorrect && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                                <Check size={14} /> Student & Correct
                               </span>
                             )}
                           </div>
@@ -2443,7 +2744,7 @@ function ResultPage() {
                       <div
                         style={{
                           marginTop: 14,
-                          padding: '12px 16px',
+                          padding: '14px 18px',
                           borderRadius: 10,
                           background: 'rgba(245, 158, 11, 0.05)',
                           border: '1px solid rgba(245, 158, 11, 0.2)',
@@ -2453,7 +2754,7 @@ function ResultPage() {
                         }}
                       >
                         <Sparkles size={16} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }} />
-                        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, margin: 0 }}>
                           <strong style={{ color: 'var(--warning)' }}>Explanation: </strong>
                           {explanationText}
                         </p>
@@ -2464,6 +2765,28 @@ function ResultPage() {
               })}
             </div>
           )}
+
+          {/* Bottom Navigation Button */}
+          <div style={{ marginTop: 36, textAlign: 'center' }}>
+            {isAdminRoute ? (
+              <Link
+                to="/admin/dashboard"
+                className="btn btn-primary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', borderRadius: 12, fontWeight: 700 }}
+              >
+                <ArrowLeft size={16} /> Return to Proctor Audit Log
+              </Link>
+            ) : (
+              <Link
+                to="/student/dashboard"
+                className="btn btn-primary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', borderRadius: 12, fontWeight: 700 }}
+              >
+                Return to Student Dashboard
+              </Link>
+            )}
+          </div>
+
         </div>
       </main>
     </div>
@@ -3403,7 +3726,7 @@ function AdminDashboard() {
               );
             })()}
 
-            {/* RESULTS */}
+            {/* PROCTOR AUDIT LOG */}
             {tab === 'results' && (() => {
               const filteredResults = resultFilterSubId
                 ? results.filter(r => {
@@ -3466,7 +3789,7 @@ function AdminDashboard() {
                 <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                   <div className="table-wrapper">
                     <table>
-                      <thead><tr><th>Student</th><th>Subject</th><th>Score</th><th>Warnings</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+                      <thead><tr><th>Student</th><th>Subject</th><th>Score</th><th>Warnings</th><th>Status</th><th>Date</th><th style={{ textAlign: 'right' }}>Action</th></tr></thead>
                       <tbody>
                         {filteredResults.length === 0
                           ? <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
@@ -3488,12 +3811,27 @@ function AdminDashboard() {
                                 <td>{r.warnings > 0 ? <span className="badge badge-orange">{r.warnings} ⚠️</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                                 <td><span className={`badge ${r.cheated ? 'badge-red' : 'badge-green'}`}>{r.status}</span></td>
                                 <td style={{ fontSize: 11 }}>{r.date}</td>
-                                <td>
-                                  {!r.cheated && (
-                                    <Link to={`/result/${r.id}`} style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary-light)' }}>
-                                      View →
-                                    </Link>
-                                  )}
+                                <td style={{ textAlign: 'right' }}>
+                                  <Link
+                                    to={`/admin/results/${r.id}`}
+                                    className="btn btn-secondary btn-sm"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      padding: '6px 14px',
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      borderRadius: 8,
+                                      background: 'rgba(255, 255, 255, 0.06)',
+                                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                                      color: '#ffffff',
+                                      textDecoration: 'none',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    <Eye size={13} style={{ color: 'var(--primary-light)' }} /> View Review
+                                  </Link>
                                 </td>
                               </tr>
                             );
@@ -3554,6 +3892,7 @@ export default function App() {
               <Route path="/exam/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
               <Route path="/thankyou/:resultId" element={<ThankYouPage />} />
               <Route path="/result/:id" element={<ResultPage />} />
+              <Route path="/admin/results/:id" element={<AdminGuard><ResultPage /></AdminGuard>} />
               <Route path="/cheated" element={<CheatedPage />} />
 
               {/* Admin Portal */}

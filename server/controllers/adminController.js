@@ -388,13 +388,57 @@ const getResultById = async (req, res, next) => {
       .populate('studentId', 'name email')
       .populate('examId', 'title duration totalMarks passingMarks')
       .populate('sessionId', 'warningCount status startedAt submittedAt')
-      .populate('answerBreakdown.questionId', 'questionText options marks explanation');
+      .populate('answerBreakdown.questionId', 'questionText options marks explanation correctAnswer');
 
     if (!result) {
       return res.status(404).json({ success: false, message: 'Result not found' });
     }
 
-    res.json({ success: true, data: result });
+    // Fetch proctoring audit logs for this session / attempt
+    let proctorLogs = [];
+    try {
+      proctorLogs = await CheatingLog.find({
+        $or: [
+          { sessionId: result.sessionId?._id || result.sessionId },
+          { studentId: result.studentId?._id || result.studentId, examId: result.examId?._id || result.examId }
+        ]
+      }).sort({ timestamp: 1, createdAt: 1 });
+    } catch (_) {}
+
+    // Ensure answer breakdown has complete question data
+    const resultObj = result.toObject();
+    const enrichedAnswers = (resultObj.answerBreakdown || []).map((item, index) => {
+      const q = item.questionId || {};
+      const qText = item.questionText || q.questionText || `Question ${index + 1}`;
+      const options = item.options || q.options || {};
+      const correctAns = item.correctAnswer || q.correctAnswer || '';
+      const stuAns = item.selectedOption || null;
+      const isCor = item.isCorrect ?? (stuAns && stuAns === correctAns);
+      const maxMarks = item.maxMarks || item.marks || q.marks || 1;
+      const awardedMarks = isCor ? maxMarks : 0;
+      const explanation = item.explanation || q.explanation || '';
+
+      return {
+        ...item,
+        questionText: qText,
+        options,
+        correctAnswer: correctAns,
+        selectedOption: stuAns,
+        isCorrect: isCor,
+        marks: awardedMarks,
+        maxMarks,
+        explanation,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        ...resultObj,
+        answerBreakdown: enrichedAnswers,
+        proctorLogs,
+      },
+    });
   } catch (error) {
     next(error);
   }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { Mail, Lock, Eye, EyeOff, GraduationCap } from 'lucide-react';
 import api from '../../services/api';
@@ -7,10 +7,14 @@ import { useAuth } from '../../context/AuthContext';
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get('redirect') || location.state?.redirect || '';
 
   const handleChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
@@ -21,12 +25,23 @@ const LoginPage = () => {
       const { data } = await api.post('/auth/login', form);
       login(data.user, data.accessToken);
       toast.success(`Welcome back, ${data.user.name}!`);
-      navigate(data.user.role === 'admin' ? '/admin/dashboard' : '/student/dashboard');
+
+      if (redirectParam && redirectParam.startsWith('/')) {
+        navigate(redirectParam, { replace: true });
+      } else {
+        navigate(data.user.role === 'admin' ? '/admin/dashboard' : '/student/dashboard', { replace: true });
+      }
     } catch (err) {
       const msg = err.response?.data?.message || 'Login failed';
       if (err.response?.data?.requiresVerification) {
         toast.error('Please verify your email first');
-        navigate('/verify-otp', { state: { userId: err.response.data.userId } });
+        navigate('/verify-otp', {
+          state: {
+            userId: err.response.data.userId,
+            email: err.response.data.email || form.email,
+            redirect: redirectParam,
+          },
+        });
       } else {
         toast.error(msg);
       }
@@ -80,7 +95,10 @@ const LoginPage = () => {
           <div>
             <div className="flex justify-between items-center">
               <label style={{ color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>Password</label>
-              <Link to="/forgot-password" style={{ color: 'var(--primary-light)', fontSize: '12px' }}>
+              <Link
+                to={redirectParam ? `/forgot-password?redirect=${encodeURIComponent(redirectParam)}` : '/forgot-password'}
+                style={{ color: 'var(--primary-light)', fontSize: '12px' }}
+              >
                 Forgot password?
               </Link>
             </div>
@@ -112,7 +130,10 @@ const LoginPage = () => {
 
         <p className="text-center mt-6" style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
           Don't have an account?{' '}
-          <Link to="/register" style={{ color: 'var(--primary-light)', fontWeight: 600 }}>
+          <Link
+            to={redirectParam ? `/register?redirect=${encodeURIComponent(redirectParam)}` : '/register'}
+            style={{ color: 'var(--primary-light)', fontWeight: 600 }}
+          >
             Create one
           </Link>
         </p>

@@ -1,14 +1,18 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { User, Mail, Lock, Eye, EyeOff, GraduationCap } from 'lucide-react';
 import api from '../../services/api';
 
 const RegisterPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get('redirect') || location.state?.redirect || '';
 
   const handleChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
@@ -25,12 +29,22 @@ const RegisterPage = () => {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/register', {
-        name: form.name,
-        email: form.email,
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
         password: form.password,
       });
-      toast.success('Account created! Please verify your email.');
-      navigate('/verify-otp', { state: { userId: data.userId, email: form.email } });
+      if (data?.devOtp) {
+        toast.success(`Account created! (Verification Code: ${data.devOtp})`, { duration: 12000 });
+      } else {
+        toast.success('Account created! Please verify your email.');
+      }
+      navigate('/verify-otp', {
+        state: {
+          userId: data.userId,
+          email: form.email.trim().toLowerCase(),
+          redirect: redirectParam,
+        },
+      });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Registration failed');
     } finally {
@@ -110,7 +124,12 @@ const RegisterPage = () => {
 
         <p className="text-center mt-6" style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
           Already have an account?{' '}
-          <Link to="/login" style={{ color: 'var(--primary-light)', fontWeight: 600 }}>Sign in</Link>
+          <Link
+            to={redirectParam ? `/login?redirect=${encodeURIComponent(redirectParam)}` : '/login'}
+            style={{ color: 'var(--primary-light)', fontWeight: 600 }}
+          >
+            Sign in
+          </Link>
         </p>
       </div>
     </div>

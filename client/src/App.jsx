@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  BrowserRouter, Routes, Route, Link, useNavigate, useParams
+  BrowserRouter, Routes, Route, Link, useNavigate, useParams, Navigate, useLocation
 } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 import {
@@ -8,10 +8,17 @@ import {
   ShieldAlert, CheckCircle2, XCircle, Camera, Wifi, Maximize2,
   FileText, ArrowRight, ArrowLeft, Eye, EyeOff, Lock, Edit3,
   Layers, X, Users, LogOut, Link2, Copy, Home, AlertCircle,
-  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles, Menu
+  ChevronRight, BarChart3, Star, Zap, Shield, Activity, Monitor, UserCheck, Share2, Send, Mail, ExternalLink, RefreshCw, Sparkles, Menu, KeyRound, Check
 } from 'lucide-react';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import StudentAuthModal from './components/StudentAuthModal.jsx';
+import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import { SocketProvider } from './context/SocketContext.jsx';
+import LoginPage from './pages/auth/LoginPage.jsx';
+import RegisterPage from './pages/auth/RegisterPage.jsx';
+import OtpPage from './pages/auth/OtpPage.jsx';
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.jsx';
+import StudentDashboard from './pages/student/StudentDashboard.jsx';
 import api from './services/api';
 
 /* ═══════════════════════════════════════════════════════
@@ -393,154 +400,613 @@ function HomePage() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   2. STUDENT LANDING
+   STUDENT ROUTE GUARD
+═══════════════════════════════════════════════════════ */
+function StudentGuard({ children }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="center-page" style={{ minHeight: '100vh', background: 'var(--bg-dark)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="spinner" style={{ width: 40, height: 40, borderWidth: 3, margin: '0 auto 16px', borderColor: 'var(--primary-light)', borderTopColor: 'transparent' }} />
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Verifying student authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    const redirectParam = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?redirect=${redirectParam}`} replace />;
+  }
+
+  if (!user.isVerified) {
+    return (
+      <Navigate
+        to="/verify-otp"
+        state={{
+          userId: user.id || user._id,
+          email: user.email,
+          redirect: location.pathname + location.search,
+        }}
+        replace
+      />
+    );
+  }
+
+  return children;
+}
+
+/* ═══════════════════════════════════════════════════════
+   2. STUDENT LANDING (STRICT AUTHENTICATION GATE)
 ═══════════════════════════════════════════════════════ */
 function StudentLanding() {
   const { examId } = useParams();
   const navigate = useNavigate();
-  const [name, setName] = useState('');
+  const { user, loading: authLoading, logout } = useAuth();
+
   const [exam, setExam] = useState(null);
   const [subject, setSubject] = useState(null);
   const [questions, setQuestions] = useState([]);
+  const [examStatus, setExamStatus] = useState('checking'); // 'checking', 'ready', 'not-found', 'unavailable', 'already-submitted', 'voided'
+  const [resultId, setResultId] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState('login');
 
+  const redirectPath = `/exam/${examId}`;
+  const encodedRedirect = encodeURIComponent(redirectPath);
+
+  // Synchronize session storage when student is logged in
   useEffect(() => {
-    const sName = sessionStorage.getItem('dp_student');
-    if (sName) {
-      setName(sName);
-    } else {
-      setShowAuthModal(true);
+    if (user?.name) {
+      sessionStorage.setItem('dp_student', user.name);
+      sessionStorage.setItem('dp_student_email', user.email);
     }
+  }, [user]);
 
-    const exams = DB.exams.get();
-    let found = exams.find(e => e.id === examId);
-    if (!found && examId) {
-      found = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600, createdAt: new Date().toISOString() };
+  // Load Exam Details & Verify Access Permissions
+  useEffect(() => {
+    if (!examId) return;
+
+    let isMounted = true;
+
+    const loadExamInfo = async () => {
+      // 1. If user is authenticated and verified, check backend access endpoint
+      if (user && user.isVerified) {
+        try {
+          const { data } = await api.get(`/student/exams/${examId}`);
+          if (!isMounted) return;
+
+          if (data?.data) {
+            const ex = data.data;
+            setExam({
+              id: ex._id || examId,
+              title: ex.title,
+              description: ex.description,
+              duration: (ex.duration || 10) * 60,
+              totalMarks: ex.totalMarks || 100,
+              passingMarks: ex.passingMarks || 40,
+              questionCount: ex.questionCount || 0,
+              maxWarnings: ex.maxWarnings || 3,
+            });
+
+            if (ex.hasSubmitted) {
+              setExamStatus('already-submitted');
+              setResultId(ex.resultId);
+              return;
+            }
+
+            if (ex.isVoided) {
+              setExamStatus('voided');
+              return;
+            }
+
+            if (!ex.canStart) {
+              setExamStatus('unavailable');
+              return;
+            }
+
+            setExamStatus('ready');
+            return;
+          }
+        } catch (err) {
+          // If 404 on backend, check local DB fallback
+          if (err.response?.status === 404) {
+            const localExam = DB.exams.get().find(e => e.id === examId);
+            if (!localExam) {
+              if (isMounted) setExamStatus('not-found');
+              return;
+            }
+          }
+        }
+      }
+
+      // Fallback/Local Exam Check (or metadata preview)
+      const exams = DB.exams.get();
+      let found = exams.find(e => e.id === examId);
+      if (!found && examId) {
+        found = {
+          id: examId,
+          subjectId: 's1',
+          title: 'AI Proctored Assessment',
+          duration: 600,
+          totalMarks: 20,
+          passingMarks: 8,
+          createdAt: new Date().toISOString()
+        };
+      }
+
+      if (!isMounted) return;
+
+      if (!found) {
+        setExamStatus('not-found');
+        return;
+      }
+
+      setExam(found);
+
+      // Check existing results in local DB
+      const studentIdentifier = user?.name || sessionStorage.getItem('dp_student');
+      const existing = DB.results.get().find(r => r.examId === examId && (studentIdentifier ? r.studentName === studentIdentifier : false));
+      const submittedFlag = studentIdentifier ? sessionStorage.getItem(`dp_submitted_${examId}_${studentIdentifier}`) : null;
+
+      if (existing || submittedFlag) {
+        setExamStatus('already-submitted');
+        setResultId(existing?.id || null);
+        return;
+      }
+
+      const subs = DB.subjects.get();
+      setSubject(subs.find(s => s.id === found.subjectId) || { name: 'Proctored Exam' });
+      const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
+      setQuestions(qs.length > 0 ? qs : DB.questions.get());
+      setExamStatus('ready');
+    };
+
+    loadExamInfo();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [examId, user]);
+
+  const handleStartExam = (e) => {
+    e.preventDefault();
+    if (!user) {
+      navigate(`/login?redirect=${encodedRedirect}`);
+      return;
     }
-    if (!found) return;
-    setExam(found);
-
-    const existing = DB.results.get().find(r => r.examId === examId && (sName ? r.studentName === sName : true));
-    const submittedFlag = sName ? sessionStorage.getItem(`dp_submitted_${examId}_${sName}`) : null;
-
-    if (existing || submittedFlag) {
-      toast.error('🚫 Exam already submitted! You cannot re-attempt this exam.', { id: 'already-sub-sl' });
-      stopGlobalWebcamStreams();
-      navigate(existing ? `/thankyou/${existing.id}` : '/', { replace: true });
+    if (!user.isVerified) {
+      navigate('/verify-otp', {
+        state: {
+          userId: user.id || user._id,
+          email: user.email,
+          redirect: redirectPath,
+        },
+      });
       return;
     }
 
-    const subs = DB.subjects.get();
-    setSubject(subs.find(s => s.id === found.subjectId) || { name: 'Proctored Exam' });
-    const qs = DB.questions.get().filter(q => q.subjectId === found.subjectId);
-    setQuestions(qs.length > 0 ? qs : DB.questions.get());
-  }, [examId, navigate]);
-
-  const handleStart = (e) => {
-    e.preventDefault();
-    if (!name.trim()) { toast.error('Please enter your full name'); return; }
-    sessionStorage.setItem('dp_student', name.trim());
+    sessionStorage.setItem('dp_student', user.name);
+    sessionStorage.setItem('dp_student_email', user.email);
     sessionStorage.setItem('dp_exam_id', examId);
+
     const students = DB.students.get();
-    if (!students.find(s => s.name === name.trim() && s.examId === examId)) {
-      students.push({ id: genId('stu'), name: name.trim(), examId, joinedAt: new Date().toISOString() });
+    if (!students.find(s => s.name === user.name && s.examId === examId)) {
+      students.push({ id: genId('stu'), name: user.name, email: user.email, examId, joinedAt: new Date().toISOString() });
       DB.students.set(students);
     }
+
     navigate(`/exam/${examId}/setup`);
   };
 
-  if (!exam) return (
-    <div className="page-wrapper">
-      <Header />
-      <div className="center-page">
-        <div className="card page-enter" style={{ maxWidth: 400, width: '100%', padding: 48, textAlign: 'center' }}>
-          <XCircle size={52} style={{ color: 'var(--danger)', margin: '0 auto 20px', opacity: .6 }} />
-          <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Exam Not Found</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 28, lineHeight: 1.6 }}>This exam link is invalid or has been removed by the administrator.</p>
-          <Link to="/" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Go Home</Link>
+  const handleResendOTP = async () => {
+    if (!user) return;
+    try {
+      const { data } = await api.post('/auth/resend-otp', {
+        userId: user.id || user._id,
+        email: user.email,
+      });
+      if (data?.devOtp) {
+        toast.success(`Verification Code sent! (OTP: ${data.devOtp})`, { duration: 12000 });
+      } else {
+        toast.success(data?.message || 'Verification code sent to your email.');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to resend verification code');
+    }
+  };
+
+  // 1. Loading State
+  if (authLoading || examStatus === 'checking') {
+    return (
+      <div className="page-wrapper">
+        <Header disableBrandLink showAdmin={false} />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: '48px 32px', textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24 }}>
+            <div className="spinner" style={{ width: 44, height: 44, borderWidth: 3, margin: '0 auto 20px', borderColor: 'var(--primary-light)', borderTopColor: 'transparent' }} />
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Checking Assessment Access</h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Verifying student registration and proctoring parameters...</p>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0);
+  // 2. Exam Not Found
+  if (examStatus === 'not-found' || !exam) {
+    return (
+      <div className="page-wrapper">
+        <Header />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 440, width: '100%', padding: 48, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <XCircle size={52} style={{ color: 'var(--danger)', margin: '0 auto 20px', opacity: 0.8 }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Assessment Not Found</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 28, lineHeight: 1.6 }}>
+              This assessment link is invalid, expired, or was removed by your instructor.
+            </p>
+            <Link to="/" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Return to Home</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Already Submitted
+  if (examStatus === 'already-submitted') {
+    return (
+      <div className="page-wrapper">
+        <Header disableBrandLink showAdmin={false} />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 480, width: '100%', padding: 40, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <CheckCircle2 size={54} style={{ color: 'var(--success)', margin: '0 auto 20px' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Assessment Completed</h2>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              You have already completed and submitted your attempt for <strong style={{ color: '#fff' }}>{exam.title}</strong>. Multiple attempts are not permitted.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {resultId && (
+                <Link to={`/thankyou/${resultId}`} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+                  View Submission Summary <ArrowRight size={16} />
+                </Link>
+              )}
+              <Link to="/student/dashboard" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
+                Go to Student Dashboard
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Disqualified / Voided
+  if (examStatus === 'voided') {
+    return (
+      <div className="page-wrapper">
+        <Header disableBrandLink showAdmin={false} />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 480, width: '100%', padding: 40, textAlign: 'center', background: 'rgba(239, 68, 68, 0.05)', borderRadius: 24, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+            <ShieldAlert size={54} style={{ color: 'var(--danger)', margin: '0 auto 20px' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Assessment Voided</h2>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              Your session for <strong style={{ color: '#fff' }}>{exam.title}</strong> was disqualified due to multiple proctoring integrity violations. Please contact your instructor.
+            </p>
+            <Link to="/" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Return to Home</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 5. Assessment Unavailable / Window Closed
+  if (examStatus === 'unavailable') {
+    return (
+      <div className="page-wrapper">
+        <Header disableBrandLink showAdmin={false} />
+        <div className="center-page">
+          <div className="card page-enter" style={{ maxWidth: 480, width: '100%', padding: 40, textAlign: 'center', background: 'rgba(15, 15, 20, 0.85)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)' }}>
+            <Clock size={54} style={{ color: 'var(--warning)', margin: '0 auto 20px' }} />
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 10 }}>Assessment Unavailable</h2>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
+              This assessment is currently not active, unpublished, or outside the scheduled examination window.
+            </p>
+            <Link to="/" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>Return to Home</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const totalMarks = exam.totalMarks || questions.reduce((s, q) => s + (q.marks || 0), 0) || 100;
+  const questionCount = exam.questionCount || questions.length || 4;
+  const durationMinutes = Math.floor(exam.duration / 60);
 
   return (
     <div className="page-wrapper">
       <Header disableBrandLink showAdmin={false} />
+
       <StudentAuthModal
         isOpen={showAuthModal}
+        initialMode={authModalMode}
         onClose={() => setShowAuthModal(false)}
         initialExamTitle={exam?.title}
-        onSuccess={(user) => {
-          setName(user.name);
+        onSuccess={(loggedUser) => {
           setShowAuthModal(false);
         }}
       />
+
       <div className="center-page">
         <div className="glow glow-1" style={{ top: '-200px', left: '-150px' }} />
-        <div className="student-landing-card page-enter">
-          {/* Header */}
-          <div className="exam-card-header">
-            <img src="/mascot.jpeg" alt="Phoenix" className="exam-mascot logo-blend" />
-            <div>
-              <h2 className="exam-card-title">{exam.title}</h2>
-              {subject && <span className="badge badge-orange">{subject.name}</span>}
-            </div>
-          </div>
+        <div className="glow glow-2" style={{ bottom: '-200px', right: '-150px' }} />
 
-          {/* Stats */}
-          <div className="exam-stats-row">
-            {[
-              [questions.length, 'Questions', BookOpen],
-              [`${Math.floor(exam.duration / 60)}m`, 'Duration', Clock],
-              [totalMarks, 'Max Marks', Star],
-            ].map(([val, label, Icon]) => (
-              <div key={label} className="exam-stat">
-                <Icon size={16} style={{ color: 'var(--secondary)', marginBottom: 4 }} />
-                <p className="exam-stat-val">{val}</p>
-                <p className="exam-stat-label">{label}</p>
+        {/* ────────────────────────────────────────────────────────
+            CASE 1 & CASE 2: STUDENT NOT AUTHENTICATED
+        ──────────────────────────────────────────────────────── */}
+        {!user && (
+          <div className="student-landing-card page-enter" style={{ maxWidth: 540 }}>
+            {/* Header with DevPhoenix Identity */}
+            <div className="exam-card-header" style={{ marginBottom: 24 }}>
+              <img src="/mascot.jpeg" alt="Phoenix" className="exam-mascot logo-blend" />
+              <div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999, background: 'rgba(230,57,70,0.12)', border: '1px solid rgba(230,57,70,0.3)', color: 'var(--primary-light)', fontSize: 12, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  <Lock size={12} /> Authentication Required
+                </div>
+                <h2 className="exam-card-title">{exam.title}</h2>
+                {subject && <span className="badge badge-orange" style={{ marginTop: 4 }}>{subject.name}</span>}
               </div>
-            ))}
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleStart} className="exam-register-form">
-            <label className="form-label">Your Full Name</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <input
-                type="text" required
-                value={name} onChange={e => setName(e.target.value)}
-                placeholder="e.g. Rahul Sharma"
-                className="input"
-                style={{ width: '100%' }}
-              />
-              {!sessionStorage.getItem('dp_student') && (
-                <button
-                  type="button"
-                  onClick={() => setShowAuthModal(true)}
-                  className="btn btn-secondary btn-full"
-                  style={{ gap: 8, justifyContent: 'center', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#a5b4fc', padding: '10px 14px', fontSize: 13 }}
-                >
-                  <UserCheck size={16} /> Student Login / Register
-                </button>
-              )}
             </div>
 
-            <div className="anti-cheat-notice">
-              <ShieldAlert size={15} style={{ color: 'var(--danger)', flexShrink: 0 }} />
-              <p>
-                <strong style={{ color: 'var(--danger)' }}>Anti-cheat active.</strong> Exiting fullscreen freezes exam timer. Switching tabs, taking photos or looking away will issue warnings and trigger disqualification.
+            {/* Assessment Access Restriction Notice */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: '18px 20px', marginBottom: 24, textAlign: 'left' }}>
+              <p style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ShieldCheck size={18} style={{ color: 'var(--primary-light)' }} /> Verified Student Access Only
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                This is a protected AI-proctored examination. To ensure test integrity, you must be logged into a verified student account before starting.
               </p>
             </div>
 
-            <button type="submit" className="btn btn-primary btn-full">
-              Continue to System Check <ArrowRight size={16} />
-            </button>
-          </form>
+            {/* Two Action Paths */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
+              {/* Option A: Create Account */}
+              <div
+                onClick={() => navigate(`/register?redirect=${encodedRedirect}`)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '18px 20px',
+                  background: 'linear-gradient(135deg, rgba(230,57,70,0.15), rgba(247,127,0,0.1))',
+                  border: '1px solid rgba(230,57,70,0.4)',
+                  borderRadius: 16,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--primary-light)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(230,57,70,0.4)'; }}
+              >
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 6, background: 'var(--primary)', color: '#fff', textTransform: 'uppercase' }}>New Student</span>
+                    <h4 style={{ fontSize: 15, fontWeight: 700, color: '#fff', margin: 0 }}>Create Student Account</h4>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Register and verify your email to unlock this assessment</p>
+                </div>
+                <ArrowRight size={18} style={{ color: 'var(--primary-light)', flexShrink: 0, marginLeft: 12 }} />
+              </div>
 
-          <p className="footer-note">© DevPhoenix · AI-Proctored Session</p>
-        </div>
+              {/* Option B: Sign In */}
+              <div
+                onClick={() => navigate(`/login?redirect=${encodedRedirect}`)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '18px 20px',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: 16,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+              >
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, padding: '2px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.1)', color: '#ddd', textTransform: 'uppercase' }}>Existing</span>
+                    <h4 style={{ fontSize: 15, fontWeight: 700, color: '#fff', margin: 0 }}>Sign In to Existing Account</h4>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>Already registered? Log in with your email & password</p>
+                </div>
+                <ArrowRight size={18} style={{ color: 'var(--text-secondary)', flexShrink: 0, marginLeft: 12 }} />
+              </div>
+            </div>
+
+            {/* In-Page Fast Modal Trigger */}
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthModalMode('login');
+                  setShowAuthModal(true);
+                }}
+                style={{ background: 'none', border: 'none', color: 'var(--primary-light)', fontSize: 13, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', padding: 4 }}
+              >
+                Or sign in quickly using pop-up modal
+              </button>
+            </div>
+
+            {/* Anti-cheat notice */}
+            <div className="anti-cheat-notice">
+              <ShieldAlert size={15} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+              <p>
+                <strong style={{ color: 'var(--danger)' }}>AI Proctoring Active.</strong> Fullscreen enforcement, webcam facial verification, and tab switch detection will be enabled once you begin.
+              </p>
+            </div>
+
+            <p className="footer-note" style={{ marginTop: 20 }}>© DevPhoenix · AI-Proctored Session</p>
+          </div>
+        )}
+
+        {/* ────────────────────────────────────────────────────────
+            CASE 4: STUDENT AUTHENTICATED BUT UNVERIFIED EMAIL
+        ──────────────────────────────────────────────────────── */}
+        {user && !user.isVerified && (
+          <div className="student-landing-card page-enter" style={{ maxWidth: 520 }}>
+            <div className="exam-card-header" style={{ marginBottom: 20 }}>
+              <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--warning)', flexShrink: 0 }}>
+                <Mail size={28} />
+              </div>
+              <div>
+                <span className="badge" style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--warning)', border: '1px solid rgba(245,158,11,0.3)', marginBottom: 6 }}>
+                  Action Required
+                </span>
+                <h2 className="exam-card-title">Email Verification Required</h2>
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: '20px', marginBottom: 24, textAlign: 'left' }}>
+              <p style={{ fontSize: 14, color: '#fff', marginBottom: 8, lineHeight: 1.5 }}>
+                Your student account for <strong>{user.email}</strong> is registered, but your email has not been verified yet.
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                Please enter the 6-digit verification code sent to your inbox to unlock <strong>{exam.title}</strong>.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+              <button
+                type="button"
+                onClick={() => navigate('/verify-otp', {
+                  state: {
+                    userId: user.id || user._id,
+                    email: user.email,
+                    redirect: redirectPath,
+                  },
+                })}
+                className="btn btn-primary btn-full"
+                style={{ padding: '14px 20px', fontSize: 14, fontWeight: 700 }}
+              >
+                <KeyRound size={16} /> Enter Verification Code (OTP) <ArrowRight size={16} />
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResendOTP}
+                className="btn btn-secondary btn-full"
+                style={{ padding: '12px 20px', fontSize: 13 }}
+              >
+                <RefreshCw size={14} /> Resend Verification Code
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Signed in as {user.email}</span>
+              <button
+                type="button"
+                onClick={logout}
+                style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <LogOut size={12} /> Sign Out
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ────────────────────────────────────────────────────────
+            CASE 3: STUDENT AUTHENTICATED & FULLY VERIFIED
+        ──────────────────────────────────────────────────────── */}
+        {user && user.isVerified && (
+          <div className="student-landing-card page-enter" style={{ maxWidth: 580 }}>
+            {/* Verified Student Header Identity Pill */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 14, marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary), var(--secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 13 }}>
+                  {user.name?.charAt(0)?.toUpperCase() || 'S'}
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{user.name}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 999, background: 'var(--success)', color: '#09090b', textTransform: 'uppercase' }}>
+                      <Check size={9} strokeWidth={3} /> Verified
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{user.email}</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={logout}
+                title="Switch student account"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)', fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <LogOut size={11} /> Switch
+              </button>
+            </div>
+
+            {/* Assessment Title & Details */}
+            <div className="exam-card-header">
+              <img src="/mascot.jpeg" alt="Phoenix" className="exam-mascot logo-blend" />
+              <div>
+                <h2 className="exam-card-title">{exam.title}</h2>
+                {subject && <span className="badge badge-orange">{subject.name}</span>}
+              </div>
+            </div>
+
+            {/* Stats Overview */}
+            <div className="exam-stats-row">
+              {[
+                [questionCount, 'Questions', BookOpen],
+                [`${durationMinutes}m`, 'Duration', Clock],
+                [totalMarks, 'Max Marks', Star],
+              ].map(([val, label, Icon]) => (
+                <div key={label} className="exam-stat">
+                  <Icon size={16} style={{ color: 'var(--secondary)', marginBottom: 4 }} />
+                  <p className="exam-stat-val">{val}</p>
+                  <p className="exam-stat-label">{label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Instructions & Proctoring Rules Checklist */}
+            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '16px 18px', marginBottom: 20, textAlign: 'left' }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                Examination Rules & Integrity Requirements
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: 'var(--text-primary)', lineHeight: 1.8 }}>
+                <li><strong>Fullscreen Locked:</strong> Exiting fullscreen pauses the test timer.</li>
+                <li><strong>Webcam Proctoring:</strong> Facial recognition tracks absence or multiple faces.</li>
+                <li><strong>Tab & Window Tracking:</strong> Navigating away records a violation warning.</li>
+                <li><strong>3 Warnings Limit:</strong> 3 detected violations will void and disqualify the session.</li>
+              </ul>
+            </div>
+
+            {/* Anti-cheat notice */}
+            <div className="anti-cheat-notice">
+              <ShieldAlert size={15} style={{ color: 'var(--danger)', flexShrink: 0 }} />
+              <p>
+                <strong style={{ color: 'var(--danger)' }}>System Check Required.</strong> You will be guided through webcam and network verification before the examination begins.
+              </p>
+            </div>
+
+            {/* Start Button */}
+            <button
+              type="button"
+              onClick={handleStartExam}
+              className="btn btn-primary btn-full"
+              style={{ padding: '16px 24px', fontSize: 15, fontWeight: 700, marginTop: 20 }}
+            >
+              Continue to System Check <ArrowRight size={18} />
+            </button>
+
+            <p className="footer-note" style={{ marginTop: 18 }}>© DevPhoenix · AI-Proctored Session</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -552,7 +1018,8 @@ function StudentLanding() {
 function SystemCheck() {
   const { examId } = useParams();
   const navigate = useNavigate();
-  const studentName = sessionStorage.getItem('dp_student');
+  const { user } = useAuth();
+  const studentName = user?.name || sessionStorage.getItem('dp_student');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -562,7 +1029,7 @@ function SystemCheck() {
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    if (!studentName) { navigate(`/exam/${examId}`); return; }
+    if (!studentName && !user) { navigate(`/exam/${examId}`); return; }
 
     const existing = DB.results.get().find(r => r.examId === examId && r.studentName === studentName);
     const submittedFlag = sessionStorage.getItem(`dp_submitted_${examId}_${studentName}`);
@@ -718,7 +1185,8 @@ function SystemCheck() {
 function ExamTake() {
   const { examId } = useParams();
   const navigate = useNavigate();
-  const studentName = sessionStorage.getItem('dp_student');
+  const { user } = useAuth();
+  const studentName = user?.name || sessionStorage.getItem('dp_student');
 
   // Memoize once — doesn't change during session
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
@@ -2585,8 +3053,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/exam/:examId" element={<StudentLanding />} />
-        <Route path="/exam/:examId/setup" element={<SystemCheck />} />
-        <Route path="/exam/:examId/take" element={<ExamTake />} />
+        <Route path="/exam/:examId/setup" element={<StudentGuard><SystemCheck /></StudentGuard>} />
+        <Route path="/exam/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
         <Route path="/thankyou/:resultId" element={<ThankYouPage />} />
         <Route path="/result/:id" element={<ResultPage />} />
         <Route path="/cheated" element={<CheatedPage />} />

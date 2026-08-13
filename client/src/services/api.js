@@ -65,8 +65,14 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         localStorage.removeItem('accessToken');
-        // Redirect to root (SPA — no /login route exists)
-        window.location.href = '/';
+        const currentPath = window.location.pathname + window.location.search;
+        if (currentPath && currentPath.startsWith('/exam/')) {
+          window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        } else if (currentPath && currentPath !== '/' && currentPath !== '/login') {
+          window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        } else {
+          window.location.href = '/login';
+        }
 
         return Promise.reject(refreshError);
       }

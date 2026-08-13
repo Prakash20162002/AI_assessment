@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, requireStudent, requireVerified } = require('../middleware/authMiddleware');
 const {
   getAvailableExams,
+  getExamById,
   startExam,
   saveAnswer,
   submitExam,
@@ -15,6 +16,7 @@ const {
 router.use(protect, requireStudent, requireVerified);
 
 router.get('/exams', getAvailableExams);
+router.get('/exams/:id', getExamById);
 router.post('/exams/:id/start', startExam);
 router.post('/exams/:id/save-answer', saveAnswer);
 router.post('/exams/:id/submit', submitExam);

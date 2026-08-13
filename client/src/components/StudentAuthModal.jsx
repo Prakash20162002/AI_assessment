@@ -11,14 +11,17 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
 
 export default function StudentAuthModal({
   isOpen,
   onClose,
   onSuccess,
   initialExamTitle,
+  initialMode = 'login',
 }) {
-  const [mode, setMode] = useState('login');
+  const { login: authLogin } = useAuth();
+  const [mode, setMode] = useState(initialMode);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -84,6 +87,10 @@ export default function StudentAuthModal({
           'dp_student_email',
           data.user.email
         );
+      }
+
+      if (data.user && data.accessToken) {
+        authLogin(data.user, data.accessToken);
       }
 
       toast.success(
@@ -246,6 +253,10 @@ export default function StudentAuthModal({
           'dp_student_email',
           data.user.email
         );
+      }
+
+      if (data.user && data.accessToken) {
+        authLogin(data.user, data.accessToken);
       }
 
       toast.success(

@@ -55,6 +55,9 @@ const OtpPage = () => {
     inputRefs.current[Math.min(pasted.length, 5)]?.focus();
   };
 
+  const searchParams = new URLSearchParams(window.location.search);
+  const redirectParam = state?.redirect || searchParams.get('redirect') || '';
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const otpString = otp.join('');
@@ -67,7 +70,12 @@ const OtpPage = () => {
       const { data } = await api.post('/auth/verify-otp', { userId, email, otp: otpString });
       login(data.user, data.accessToken);
       toast.success('Email verified! Welcome aboard 🎉');
-      navigate('/student/dashboard');
+
+      if (redirectParam && redirectParam.startsWith('/')) {
+        navigate(redirectParam, { replace: true });
+      } else {
+        navigate(data.user.role === 'admin' ? '/admin/dashboard' : '/student/dashboard', { replace: true });
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Invalid OTP');
     } finally {

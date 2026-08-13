@@ -413,8 +413,72 @@ const getResultDetail = async (req, res, next) => {
   }
 };
 
+// @desc    Get single exam details & access status for authenticated verified student
+// @route   GET /api/student/exams/:id
+const getExamById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    let exam = null;
+    const mongoose = require('mongoose');
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      exam = await Exam.findById(id)
+        .select('title description duration totalMarks passingMarks startTime endTime isPublished maxWarnings questionCount createdAt')
+        .populate('createdBy', 'name email');
+    }
+
+    if (!exam) {
+      return res.status(404).json({ success: false, message: 'Assessment not found' });
+    }
+
+    if (!exam.isPublished) {
+      return res.status(403).json({ success: false, message: 'Assessment is not published or currently unavailable' });
+    }
+
+    const now = new Date();
+    let availabilityStatus = 'available';
+    if (exam.startTime && now < exam.startTime) {
+      availabilityStatus = 'upcoming';
+    } else if (exam.endTime && now > exam.endTime) {
+      availabilityStatus = 'ended';
+    }
+
+    // Check if student already has a session or result
+    const session = await ExamSession.findOne({ studentId: req.user._id, examId: exam._id });
+    const result = await Result.findOne({ studentId: req.user._id, examId: exam._id });
+
+    let sessionStatus = 'not-started';
+    let warningCount = 0;
+    if (session) {
+      sessionStatus = session.status;
+      warningCount = session.warningCount || 0;
+    }
+
+    const hasSubmitted = sessionStatus === 'submitted' || sessionStatus === 'timeout' || Boolean(result);
+    const isVoided = sessionStatus === 'voided';
+    const canStart = availabilityStatus === 'available' && !hasSubmitted && !isVoided;
+
+    res.json({
+      success: true,
+      data: {
+        ...exam.toObject(),
+        availabilityStatus,
+        sessionStatus,
+        warningCount,
+        hasSubmitted,
+        isVoided,
+        resultId: result?._id || null,
+        canStart,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAvailableExams,
+  getExamById,
   startExam,
   saveAnswer,
   submitExam,

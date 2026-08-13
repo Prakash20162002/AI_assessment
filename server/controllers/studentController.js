@@ -116,11 +116,18 @@ const startExam = async (req, res, next) => {
 
     const questionMap = {};
     populatedQuestions.forEach((q) => {
-      questionMap[q._id.toString()] = q;
+      const qObj = q.toObject();
+      questionMap[q._id.toString()] = {
+        ...qObj,
+        marks: Number(qObj.marks) > 0 ? Number(qObj.marks) : 1,
+      };
     });
     const orderedQuestions = session.questionOrder
       .map((id) => questionMap[id.toString()])
       .filter(Boolean);
+
+    // Calculate actual total marks dynamically from questions
+    const dynamicTotalMarks = orderedQuestions.reduce((s, q) => s + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0);
 
     // Calculate server authoritative remaining time
     const elapsedSeconds = Math.floor((now - session.startedAt) / 1000);
@@ -142,9 +149,10 @@ const startExam = async (req, res, next) => {
           id: exam._id,
           title: exam.title,
           duration: exam.duration,
-          totalMarks: exam.totalMarks,
+          totalMarks: dynamicTotalMarks || exam.totalMarks,
           passingMarks: exam.passingMarks,
           maxWarnings: exam.maxWarnings,
+          questionCount: orderedQuestions.length,
         },
         questions: orderedQuestions,
       },
@@ -179,18 +187,27 @@ const saveAnswer = async (req, res, next) => {
     if (elapsedSeconds > allowedDuration + 30) {
       session.status = 'timeout';
       await session.save();
-      return res.status(400).json({ success: false, message: 'Assessment duration expired' });
+      return res.status(400).json({ success: false, message: 'Time expired. Assessment automatically submitted.' });
     }
 
-    const answerIndex = session.answers.findIndex((a) => a.questionId.toString() === questionId);
-    if (answerIndex !== -1) {
+    // Update answer
+    const answerIndex = session.answers.findIndex(
+      (a) => a.questionId.toString() === questionId
+    );
+
+    if (answerIndex > -1) {
       session.answers[answerIndex].selectedOption = selectedOption;
-      session.answers[answerIndex].savedAt = new Date();
+      session.answers[answerIndex].answeredAt = new Date();
+    } else {
+      session.answers.push({
+        questionId,
+        selectedOption,
+        answeredAt: new Date(),
+      });
     }
 
-    session.currentQuestion = currentQuestion ?? session.currentQuestion;
-    session.timeRemaining = Math.max(0, allowedDuration - elapsedSeconds);
-    session.lastActive = new Date();
+    if (currentQuestion !== undefined) session.currentQuestion = currentQuestion;
+    if (timeRemaining !== undefined) session.timeRemaining = Math.max(0, (allowedDuration - elapsedSeconds));
 
     await session.save();
 
@@ -200,7 +217,7 @@ const saveAnswer = async (req, res, next) => {
   }
 };
 
-// @desc    Submit exam and calculate result
+// @desc    Submit assessment & calculate authoritative score
 // @route   POST /api/student/exams/:id/submit
 const submitExam = async (req, res, next) => {
   try {
@@ -211,7 +228,7 @@ const submitExam = async (req, res, next) => {
     });
 
     if (!session) {
-      return res.status(404).json({ success: false, message: 'Active ongoing session not found' });
+      return res.status(404).json({ success: false, message: 'Active session not found' });
     }
 
     const exam = await Exam.findById(req.params.id);
@@ -220,12 +237,22 @@ const submitExam = async (req, res, next) => {
     const allowedDuration = exam.duration * 60;
     const isTimeout = elapsedSeconds > allowedDuration + 30;
 
-    const questions = await Question.find({ _id: { $in: session.questionOrder } }).select('correctAnswer marks');
+    const questions = await Question.find({ _id: { $in: session.questionOrder } }).select('questionText options correctAnswer marks explanation');
 
     const questionMap = {};
+    let totalMaxMarks = 0;
     questions.forEach((q) => {
-      questionMap[q._id.toString()] = q;
+      const qMark = Number(q.marks) > 0 ? Number(q.marks) : 1;
+      questionMap[q._id.toString()] = {
+        ...q.toObject(),
+        marks: qMark,
+      };
+      totalMaxMarks += qMark;
     });
+
+    if (totalMaxMarks === 0 && exam.totalMarks > 0) {
+      totalMaxMarks = exam.totalMarks;
+    }
 
     let correct = 0;
     let wrong = 0;
@@ -237,38 +264,52 @@ const submitExam = async (req, res, next) => {
       const q = questionMap[answer.questionId.toString()];
       if (!q) return;
 
+      const qMark = q.marks;
+
       if (!answer.selectedOption) {
         skipped++;
         answerBreakdown.push({
           questionId: answer.questionId,
+          questionText: q.questionText,
+          options: q.options,
           selectedOption: null,
           correctAnswer: q.correctAnswer,
           isCorrect: false,
           marks: 0,
+          maxMarks: qMark,
+          explanation: q.explanation || '',
         });
       } else if (answer.selectedOption === q.correctAnswer) {
         correct++;
-        score += q.marks;
+        score += qMark;
         answerBreakdown.push({
           questionId: answer.questionId,
+          questionText: q.questionText,
+          options: q.options,
           selectedOption: answer.selectedOption,
           correctAnswer: q.correctAnswer,
           isCorrect: true,
-          marks: q.marks,
+          marks: qMark,
+          maxMarks: qMark,
+          explanation: q.explanation || '',
         });
       } else {
         wrong++;
         answerBreakdown.push({
           questionId: answer.questionId,
+          questionText: q.questionText,
+          options: q.options,
           selectedOption: answer.selectedOption,
           correctAnswer: q.correctAnswer,
           isCorrect: false,
           marks: 0,
+          maxMarks: qMark,
+          explanation: q.explanation || '',
         });
       }
     });
 
-    const percentage = exam.totalMarks > 0 ? (score / exam.totalMarks) * 100 : 0;
+    const percentage = totalMaxMarks > 0 ? (score / totalMaxMarks) * 100 : 0;
     const isPassed = score >= exam.passingMarks;
     const timeTaken = Math.min(elapsedSeconds, allowedDuration);
 
@@ -277,7 +318,7 @@ const submitExam = async (req, res, next) => {
     session.timeRemaining = 0;
     await session.save();
 
-    // Create result
+    // Create result with authoritative calculated marks
     const result = await Result.create({
       studentId: req.user._id,
       examId: exam._id,
@@ -288,7 +329,7 @@ const submitExam = async (req, res, next) => {
       wrong,
       skipped,
       score,
-      totalMarks: exam.totalMarks,
+      totalMarks: totalMaxMarks,
       percentage: parseFloat(percentage.toFixed(2)),
       isPassed,
       timeTaken,
@@ -301,7 +342,7 @@ const submitExam = async (req, res, next) => {
       examId: exam._id,
       sessionId: session._id,
       eventType: isTimeout ? 'time-expired' : 'assessment-submitted',
-      details: `Assessment submitted. Score: ${score}/${exam.totalMarks} (${percentage.toFixed(1)}%)`,
+      details: `Assessment submitted. Score: ${score}/${totalMaxMarks} (${percentage.toFixed(1)}%)`,
     });
 
     res.json({
@@ -313,7 +354,7 @@ const submitExam = async (req, res, next) => {
         wrong,
         skipped,
         score,
-        totalMarks: exam.totalMarks,
+        totalMarks: totalMaxMarks,
         percentage: parseFloat(percentage.toFixed(2)),
         isPassed,
         timeTaken,
@@ -447,6 +488,11 @@ const getExamById = async (req, res, next) => {
     const session = await ExamSession.findOne({ studentId: req.user._id, examId: exam._id });
     const result = await Result.findOne({ studentId: req.user._id, examId: exam._id });
 
+    // Calculate actual total marks & question count from questions
+    const questions = await Question.find({ examId: exam._id });
+    const questionCount = questions.length;
+    const dynamicTotalMarks = questions.reduce((sum, q) => sum + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0);
+
     let sessionStatus = 'not-started';
     let warningCount = 0;
     if (session) {
@@ -462,6 +508,8 @@ const getExamById = async (req, res, next) => {
       success: true,
       data: {
         ...exam.toObject(),
+        totalMarks: dynamicTotalMarks || exam.totalMarks,
+        questionCount: questionCount || exam.questionCount,
         availabilityStatus,
         sessionStatus,
         warningCount,

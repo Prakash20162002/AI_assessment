@@ -156,12 +156,39 @@ const ResultPage = () => {
                       <XCircle style={{ color: '#ef4444' }} />
                     )}
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="badge badge-primary">Q{index + 1}</span>
-                      <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{qMarks} mark{qMarks !== 1 ? 's' : ''}</span>
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="badge badge-primary">Q{index + 1}</span>
+                        <span
+                          style={{
+                            background: isCor ? 'rgba(16,185,129,0.12)' : item.selectedOption === null ? 'rgba(255,255,255,0.06)' : 'rgba(239,68,68,0.12)',
+                            color: isCor ? '#10b981' : item.selectedOption === null ? '#94a3b8' : '#ef4444',
+                            border: `1px solid ${isCor ? 'rgba(16,185,129,0.3)' : item.selectedOption === null ? 'rgba(255,255,255,0.1)' : 'rgba(239,68,68,0.3)'}`,
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            padding: '2px 8px',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          {isCor ? '✓ Correct' : item.selectedOption === null ? '— Not Answered' : '✕ Incorrect'}
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: '12.5px',
+                          fontWeight: 700,
+                          color: isCor ? '#10b981' : '#ef4444',
+                          background: 'rgba(255,255,255,0.04)',
+                          padding: '2px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                        }}
+                      >
+                        Marks: {isCor ? qMarks : 0} / {qMarks}
+                      </span>
                     </div>
-                    <p style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{qText}</p>
+                    <p style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '14.5px', lineHeight: 1.5 }}>{qText}</p>
                   </div>
                 </div>
 

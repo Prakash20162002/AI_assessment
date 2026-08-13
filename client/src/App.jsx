@@ -3106,8 +3106,20 @@ function AdminDashboard() {
                         </select>
                       </div>
                       <div className="form-group">
-                        <label className="form-label">Marks *</label>
-                        <input type="number" min={1} value={qMarks} onChange={e => setQMarks(e.target.value)} className="input" />
+                        <label className="form-label">Marks for this Question *</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.1"
+                          required
+                          value={qMarks}
+                          onChange={e => setQMarks(e.target.value)}
+                          className="input"
+                          style={{ fontWeight: 700, color: 'var(--primary-light)' }}
+                        />
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
+                          Set the marks awarded for a correct answer.
+                        </span>
                       </div>
                     </div>
 
@@ -3126,15 +3138,20 @@ function AdminDashboard() {
 
                   <div>
                     {/* Dynamic Branch Filter Bar */}
-                    <div className="q-filter-bar" style={{ background: 'var(--bg-card)', padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border)', marginBottom: 16 }}>
+                    <div className="q-filter-bar" style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>Subject Branch:</span>
-                      <select value={filterSubId} onChange={e => handleFilterSubSelect(e.target.value)} className="input input-sm" style={{ cursor: 'pointer', maxWidth: 220 }}>
+                      <select value={filterSubId} onChange={e => handleFilterSubSelect(e.target.value)} className="input input-sm" style={{ cursor: 'pointer', maxWidth: 200 }}>
                         <option value="">All Subjects</option>
                         {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                        {filteredQuestions.length} question{filteredQuestions.length !== 1 ? 's' : ''} in branch
-                      </span>
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span className="badge badge-gray" style={{ fontSize: 11 }}>
+                          {filteredQuestions.length} Questions
+                        </span>
+                        <span className="badge badge-orange" style={{ fontSize: 11, fontWeight: 700 }}>
+                          Total: {filteredQuestions.reduce((s, q) => s + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0)} Marks
+                        </span>
+                      </div>
                     </div>
 
                     <div className="admin-list">
@@ -3142,29 +3159,43 @@ function AdminDashboard() {
                         ? <div className="empty-state">{questions.length === 0 ? 'No questions yet. Add one using the form.' : 'No questions for this subject branch.'}</div>
                         : filteredQuestions.map((q, i) => {
                           const sub = subjects.find(s => s.id === q.subjectId);
+                          const qMarkVal = Number(q.marks) > 0 ? Number(q.marks) : 1;
                           return (
-                            <div key={q.id} className="card admin-q-card">
+                            <div key={q.id} className="card admin-q-card" style={{ padding: '16px 18px' }}>
                               <div className="admin-q-header">
                                 <div style={{ flex: 1 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                                    <span className="badge badge-orange" style={{ fontSize: 9 }}>Q{i + 1}</span>
-                                    {sub && <span className="badge badge-gray" style={{ fontSize: 9 }}>{sub.name}</span>}
-                                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{q.marks}m</span>
+                                    <span className="badge badge-orange" style={{ fontSize: 10, fontWeight: 700 }}>Q{i + 1}</span>
+                                    {sub && <span className="badge badge-gray" style={{ fontSize: 10 }}>{sub.name}</span>}
+                                    <span
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        color: 'var(--secondary)',
+                                        background: 'rgba(247,127,0,0.12)',
+                                        border: '1px solid rgba(247,127,0,0.25)',
+                                        padding: '2px 7px',
+                                        borderRadius: 5,
+                                      }}
+                                    >
+                                      Marks: [ {qMarkVal} ]
+                                    </span>
                                   </div>
-                                  <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', lineHeight: 1.4 }}>{q.questionText}</p>
+                                  <p style={{ fontSize: 14, fontWeight: 600, color: '#fff', lineHeight: 1.4 }}>{q.questionText}</p>
                                 </div>
                                 <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                  <button onClick={() => editQ(q)} className="btn btn-icon btn-sm" title="Edit"><Edit3 size={12} /></button>
-                                  <button onClick={() => delQ(q.id)} className="btn btn-icon btn-sm" style={{ color: 'var(--danger)' }} title="Delete"><Trash2 size={12} /></button>
+                                  <button onClick={() => editQ(q)} className="btn btn-icon btn-sm" title="Edit"><Edit3 size={13} /></button>
+                                  <button onClick={() => delQ(q.id)} className="btn btn-icon btn-sm" style={{ color: 'var(--danger)' }} title="Delete"><Trash2 size={13} /></button>
                                 </div>
                               </div>
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
                                 {Object.entries(q.options || {}).map(([k, v]) => (
                                   <div key={k} style={{
                                     padding: '6px 10px', borderRadius: 7, fontSize: 12,
-                                    border: `1px solid ${q.correctAnswer === k ? 'rgba(16,185,129,.2)' : 'var(--border)'}`,
-                                    background: q.correctAnswer === k ? 'rgba(16,185,129,.05)' : 'transparent',
+                                    border: `1px solid ${q.correctAnswer === k ? 'rgba(16,185,129,.3)' : 'var(--border)'}`,
+                                    background: q.correctAnswer === k ? 'rgba(16,185,129,.08)' : 'transparent',
                                     color: q.correctAnswer === k ? 'var(--success)' : 'var(--text-secondary)',
+                                    fontWeight: q.correctAnswer === k ? 600 : 400,
                                   }}>
                                     {k}. {v}
                                   </div>

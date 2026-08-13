@@ -26,8 +26,9 @@ const questionSchema = new mongoose.Schema(
     },
     marks: {
       type: Number,
+      required: [true, 'Marks is required'],
       default: 1,
-      min: [1, 'Marks must be at least 1'],
+      min: [0.01, 'Marks must be greater than 0'],
     },
     negativeMark: {
       type: Number,

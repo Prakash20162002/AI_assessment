@@ -101,6 +101,18 @@ const togglePublish = async (req, res, next) => {
   }
 };
 
+// Helper to synchronize exam totalMarks and questionCount from actual questions
+const syncExamStats = async (examId) => {
+  const questions = await Question.find({ examId });
+  const questionCount = questions.length;
+  const totalMarks = questions.reduce((sum, q) => {
+    const val = Number(q.marks);
+    return sum + (val > 0 ? val : 1);
+  }, 0);
+  await Exam.findByIdAndUpdate(examId, { questionCount, totalMarks });
+  return { questionCount, totalMarks };
+};
+
 // ─── Question Management ──────────────────────────────────────────────────────
 
 // @desc    Get all questions for an exam
@@ -108,7 +120,15 @@ const togglePublish = async (req, res, next) => {
 const getQuestions = async (req, res, next) => {
   try {
     const questions = await Question.find({ examId: req.params.id }).sort({ order: 1 });
-    res.json({ success: true, count: questions.length, data: questions });
+    // Backward compatibility fallback ensuring marks is always a positive number
+    const normalizedQuestions = questions.map((q) => {
+      const qObj = q.toObject();
+      return {
+        ...qObj,
+        marks: Number(qObj.marks) > 0 ? Number(qObj.marks) : 1,
+      };
+    });
+    res.json({ success: true, count: normalizedQuestions.length, data: normalizedQuestions });
   } catch (error) {
     next(error);
   }
@@ -121,15 +141,25 @@ const addQuestion = async (req, res, next) => {
     const exam = await Exam.findById(req.params.id);
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
 
+    let marks = 1;
+    if (req.body.marks !== undefined && req.body.marks !== null && req.body.marks !== '') {
+      const parsedMarks = Number(req.body.marks);
+      if (isNaN(parsedMarks) || parsedMarks <= 0) {
+        return res.status(400).json({ success: false, message: 'Marks must be greater than 0.' });
+      }
+      marks = parsedMarks;
+    }
+
     const count = await Question.countDocuments({ examId: req.params.id });
     const question = await Question.create({
       ...req.body,
+      marks,
       examId: req.params.id,
       order: count,
     });
 
-    // Update exam question count
-    await Exam.findByIdAndUpdate(req.params.id, { $inc: { questionCount: 1 } });
+    // Recalculate and synchronize exam stats
+    await syncExamStats(req.params.id);
 
     res.status(201).json({ success: true, data: question });
   } catch (error) {
@@ -161,6 +191,14 @@ const bulkUploadQuestions = async (req, res, next) => {
       const answer = String(correctAnswer).toUpperCase().trim();
       if (!['A', 'B', 'C', 'D'].includes(answer)) return;
 
+      let qMarks = 1;
+      if (marks !== undefined && marks !== null) {
+        const parsed = Number(marks);
+        if (!isNaN(parsed) && parsed > 0) {
+          qMarks = parsed;
+        }
+      }
+
       questions.push({
         examId: req.params.id,
         questionText: String(questionText).trim(),
@@ -171,7 +209,7 @@ const bulkUploadQuestions = async (req, res, next) => {
           D: String(optD).trim(),
         },
         correctAnswer: answer,
-        marks: marks ? parseInt(marks) : 1,
+        marks: qMarks,
         explanation: explanation ? String(explanation).trim() : '',
         order: existingCount++,
       });
@@ -182,7 +220,7 @@ const bulkUploadQuestions = async (req, res, next) => {
     }
 
     await Question.insertMany(questions);
-    await Exam.findByIdAndUpdate(req.params.id, { $inc: { questionCount: questions.length } });
+    await syncExamStats(req.params.id);
 
     // Clean up uploaded file
     const fs = require('fs');
@@ -201,11 +239,23 @@ const bulkUploadQuestions = async (req, res, next) => {
 // @route   PUT /api/admin/questions/:id
 const updateQuestion = async (req, res, next) => {
   try {
+    if (req.body.marks !== undefined && req.body.marks !== null && req.body.marks !== '') {
+      const parsedMarks = Number(req.body.marks);
+      if (isNaN(parsedMarks) || parsedMarks <= 0) {
+        return res.status(400).json({ success: false, message: 'Marks must be greater than 0.' });
+      }
+      req.body.marks = parsedMarks;
+    }
+
     const question = await Question.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
     });
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
+
+    // Recalculate exam total marks & count
+    await syncExamStats(question.examId);
+
     res.json({ success: true, data: question });
   } catch (error) {
     next(error);
@@ -219,8 +269,9 @@ const deleteQuestion = async (req, res, next) => {
     const question = await Question.findById(req.params.id);
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
 
-    await Exam.findByIdAndUpdate(question.examId, { $inc: { questionCount: -1 } });
+    const examId = question.examId;
     await question.deleteOne();
+    await syncExamStats(examId);
 
     res.json({ success: true, message: 'Question deleted' });
   } catch (error) {

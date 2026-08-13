@@ -61,10 +61,14 @@ const resultSchema = new mongoose.Schema(
     answerBreakdown: [
       {
         questionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Question' },
+        questionText: String,
+        options: mongoose.Schema.Types.Mixed,
         selectedOption: String,
         correctAnswer: String,
         isCorrect: Boolean,
         marks: Number,
+        maxMarks: Number,
+        explanation: String,
         _id: false,
       },
     ],

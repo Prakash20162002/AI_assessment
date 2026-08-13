@@ -20,12 +20,13 @@ const examSchema = new mongoose.Schema(
     },
     totalMarks: {
       type: Number,
-      required: [true, 'Total marks is required'],
-      min: [1, 'Total marks must be at least 1'],
+      default: 0,
+      min: [0, 'Total marks cannot be negative'],
     },
     passingMarks: {
       type: Number,
-      required: [true, 'Passing marks is required'],
+      default: 0,
+      min: [0, 'Passing marks cannot be negative'],
     },
     startTime: {
       type: Date,

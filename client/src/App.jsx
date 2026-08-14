@@ -1406,7 +1406,6 @@ function ExamTake() {
   useEffect(() => { questionsRef.current = questions; }, [questions]);
   useEffect(() => { examRef.current = exam; }, [exam]);
   useEffect(() => { studentNameRef.current = studentName; }, [studentName]);
-  useEffect(() => { doSubmitRef.current = doSubmit; }, [doSubmit]);
 
   const noFaceFramesRef = useRef(0);
   const multiFaceFramesRef = useRef(0);
@@ -1556,6 +1555,8 @@ function ExamTake() {
       navigate('/cheated', { replace: true });
     }
   }, [saveResult, navigate, stopCameraAndExamProctoring, examId]);
+
+  useEffect(() => { doSubmitRef.current = doSubmit; }, [doSubmit]);
 
   const triggerViolation = useCallback((reason) => {
     if (terminatedRef.current) return;

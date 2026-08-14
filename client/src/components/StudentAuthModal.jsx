@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   User,
   Mail,
@@ -531,9 +532,25 @@ export default function StudentAuthModal({
             </div>
 
             <div>
-              <label className="form-label">
-                Password
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <label className="form-label" style={{ margin: 0 }}>
+                  Password
+                </label>
+                <Link
+                  to="/forgot-password"
+                  onClick={onClose}
+                  style={{
+                    fontSize: 12,
+                    color: 'rgba(255, 255, 255, 0.55)',
+                    textDecoration: 'none',
+                    transition: 'color 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--primary-light)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255, 255, 255, 0.55)')}
+                >
+                  Forgot password?
+                </Link>
+              </div>
 
               <div
                 style={{

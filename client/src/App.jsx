@@ -1375,6 +1375,7 @@ function ExamTake() {
   const warningCooldown = useRef(false);
   const timerRef = useRef(null);
   const mountTimeRef = useRef(Date.now());
+  const isSubmittingRef = useRef(false);
 
   const answersRef = useRef(answers);
   const timeLeftRef = useRef(timeLeft);
@@ -1488,6 +1489,9 @@ function ExamTake() {
 
   const doSubmit = useCallback(async (cheated = false, timeUp = false) => {
     if (!questionsRef.current.length) return;
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+
     clearInterval(timerRef.current);
     stopCameraAndExamProctoring();
     stopGlobalWebcamStreams();
@@ -1513,6 +1517,12 @@ function ExamTake() {
       });
       if (data?.data?.resultId || data?.data?.id || data?.data?._id) {
         finalResultId = data.data.resultId || data.data.id || data.data._id;
+        const allRes = DB.results.get();
+        if (allRes.length > 0 && allRes[0].id === localResult.id) {
+          allRes[0].id = finalResultId;
+          allRes[0]._id = finalResultId;
+          DB.results.set(allRes);
+        }
       }
     } catch (err) {
       console.warn('Submit API error:', err.response?.data?.message || err.message);
@@ -2163,6 +2173,7 @@ function ExamTake() {
 ═══════════════════════════════════════════════════════ */
 function ThankYouPage() {
   const { resultId } = useParams();
+  const { user } = useAuth();
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -2198,8 +2209,24 @@ function ThankYouPage() {
 
       // 2. Fallback to localStorage
       if (isMounted) {
-        const r = DB.results.get().find(r => r.id === resultId);
-        setResult(r);
+        const localResults = DB.results.get() || [];
+        const r = localResults.find(r => r.id === resultId || r.id === String(resultId) || r._id === resultId);
+        if (r) {
+          setResult(r);
+        } else if (localResults.length > 0) {
+          setResult(localResults[0]);
+        } else {
+          setResult({
+            id: String(resultId || 'res'),
+            examId: '',
+            studentName: user?.name || 'Student',
+            score: 0,
+            totalMarks: 100,
+            warnings: 0,
+            timeTaken: 0,
+            date: new Date().toLocaleString(),
+          });
+        }
       }
     };
 
@@ -2218,7 +2245,7 @@ function ThankYouPage() {
       window.removeEventListener('popstate', handlePopState);
       stopGlobalWebcamStreams();
     };
-  }, [resultId]);
+  }, [resultId, user?.name]);
 
   if (!result) return (
     <div className="center-page" style={{ minHeight: '100vh' }}>
@@ -2283,7 +2310,7 @@ function ThankYouPage() {
           </div>
 
           <p className="ty-session-note">
-            Submitted on {result.date} · Session ID: <code>{result.id.slice(-10)}</code>
+            Submitted on {result.date} · Session ID: <code>{String(result.id || '').slice(-10)}</code>
           </p>
         </div>
 
@@ -3199,7 +3226,22 @@ function AdminLogin() {
               <input type="text" required value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="Enter Admin email or ID" className="input" />
             </div>
             <div className="form-group">
-              <label className="form-label">Password</label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <label className="form-label" style={{ margin: 0 }}>Password</label>
+                <Link
+                  to="/forgot-password?redirect=/admin"
+                  style={{
+                    fontSize: 12,
+                    color: 'rgba(255, 255, 255, 0.55)',
+                    textDecoration: 'none',
+                    transition: 'color 0.2s ease'
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--primary-light)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255, 255, 255, 0.55)')}
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <div className="input-pw-wrap">
                 <input
                   type={showPw ? 'text' : 'password'} required
@@ -4719,6 +4761,7 @@ export default function App() {
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/verify-otp" element={<OtpPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ForgotPasswordPage />} />
 
               {/* Student Protected Dashboard */}
               <Route path="/student/dashboard" element={<StudentGuard><StudentDashboard /></StudentGuard>} />

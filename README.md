@@ -949,21 +949,19 @@ Responsible for:
 
 ---
 
-# 👤 Current Admin Accounts
+# 👤 Administrator Authentication
 
-> ⚠️ **Development-only credentials**
+Administrator authentication is handled strictly server-side via the backend JWT authentication API:
 
-| Full Name | Login ID | Password | Subject |
-|---|---|---|---|
-| Nilesh Maity | `nilesh` | `datascience2026` | Data Science |
-| Rohit Pandit | `rohit` | `MERN2026` | MERN Stack |
-| Prakash Halwai | `prakash` | `Devops2026` | Cloud DevOps |
+- **Login Endpoint**: `POST /api/auth/login`
+- **Role Enforcement**: `role: "admin"` enforced by `protect` and `requireAdmin` middleware on all `/api/admin/*` endpoints.
+- **Password Storage**: Passwords are securely hashed server-side using `bcryptjs` (salt factor 12) in MongoDB.
+- **Zero Frontend Secrets**: No passwords, admin account arrays, or secrets exist in client bundles or repositories.
 
-### Production Warning
-
-These credentials are currently hardcoded in the frontend and stored in plain text.
-
-For production, migrate administrator authentication to the backend JWT authentication system.
+To seed or create initial administrator accounts in MongoDB, run the server-side seed script:
+```bash
+npm run seed --prefix server
+```
 
 ---
 

@@ -25,12 +25,6 @@ import api from './services/api';
 /* ═══════════════════════════════════════════════════════
    DATA LAYER  (localStorage)
 ═══════════════════════════════════════════════════════ */
-const ADMIN_ACCOUNTS = [
-  { loginId: 'nilesh', password: 'datascience2026', name: 'Nilesh Maity' },
-  { loginId: 'rohit', password: 'MERN2026', name: 'Rohit Pandit' },
-  { loginId: 'prakash', password: 'Devops2026', name: 'Prakash Halwai' },
-];
-
 const MAX_WARNINGS = 3;
 
 const SEED = {
@@ -2851,57 +2845,61 @@ function CheatedPage() {
 ═══════════════════════════════════════════════════════ */
 function AdminLogin() {
   const navigate = useNavigate();
+  const { login: authLogin } = useAuth();
   const [loginId, setLoginId] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') {
+    const hasAdminSession = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!localStorage.getItem('accessToken');
+    if (hasAdminSession) {
       navigate('/admin/dashboard');
     }
   }, [navigate]);
 
   const login = async (e) => {
     e.preventDefault();
+    const identifier = loginId.trim();
+    if (!identifier || !pw) {
+      toast.error('Please enter both Admin ID / Email and password');
+      return;
+    }
     setLoading(true);
 
     try {
       const { data } = await api.post('/auth/login', {
-        email: loginId.trim(),
+        email: identifier,
         password: pw,
       });
 
       if (data?.success && data?.accessToken) {
+        if (data.user?.role !== 'admin') {
+          toast.error('You are not authorized to access the Admin Dashboard.');
+          setLoading(false);
+          return;
+        }
+
         localStorage.setItem('accessToken', data.accessToken);
         sessionStorage.setItem('dp_admin', 'true');
-        sessionStorage.setItem('dp_admin_name', data.user?.name || loginId);
+        sessionStorage.setItem('dp_admin_name', data.user?.name || identifier);
         localStorage.setItem('dp_admin', 'true');
-        localStorage.setItem('dp_admin_name', data.user?.name || loginId);
-        toast.success(`Welcome back, ${data.user?.name || loginId}!`);
+        localStorage.setItem('dp_admin_name', data.user?.name || identifier);
+        if (authLogin) {
+          authLogin(data.user, data.accessToken);
+        }
+        toast.success(`Welcome back, ${data.user?.name || 'Admin'}!`);
         navigate('/admin/dashboard');
-        setLoading(false);
         return;
+      } else {
+        toast.error(data?.message || 'Invalid email or password');
       }
     } catch (err) {
-      console.log('Backend admin login failed, attempting local fallback:', err.response?.data?.message || err.message);
+      const errMsg = err.response?.data?.message || 'Invalid email or password';
+      toast.error(errMsg);
+    } finally {
+      setLoading(false);
     }
-
-    const matched = ADMIN_ACCOUNTS.find(
-      acc => acc.loginId.toLowerCase() === loginId.trim().toLowerCase() && acc.password === pw
-    );
-
-    if (matched) {
-      sessionStorage.setItem('dp_admin', 'true');
-      sessionStorage.setItem('dp_admin_name', matched.name);
-      localStorage.setItem('dp_admin', 'true');
-      localStorage.setItem('dp_admin_name', matched.name);
-      toast.success(`Welcome back, ${matched.name}!`);
-      navigate('/admin/dashboard');
-    } else {
-      toast.error('Invalid credentials');
-    }
-    setLoading(false);
   };
 
   return (
@@ -2920,8 +2918,8 @@ function AdminLogin() {
 
           <form onSubmit={login} className="card card-gradient-border admin-login-form">
             <div className="form-group">
-              <label className="form-label">Admin Name / Login ID</label>
-              <input type="text" required value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="Enter your Admin Login ID" className="input" />
+              <label className="form-label">Admin Name / Email / Login ID</label>
+              <input type="text" required value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="Enter Admin email or ID" className="input" />
             </div>
             <div className="form-group">
               <label className="form-label">Password</label>
@@ -2952,12 +2950,14 @@ function AdminLogin() {
 ═══════════════════════════════════════════════════════ */
 function AdminGuard({ children }) {
   const navigate = useNavigate();
+  const token = localStorage.getItem('accessToken');
+  const isAdmin = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!token;
+
   useEffect(() => {
-    const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
-    if (!isAdmin) navigate('/admin');
+    const hasAdmin = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!localStorage.getItem('accessToken');
+    if (!hasAdmin) navigate('/admin');
   }, [navigate]);
 
-  const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
   if (!isAdmin) return null;
   return children;
 }
@@ -3112,7 +3112,10 @@ function AdminDashboard() {
     if (subId) setQSubId(subId);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (_) {}
     sessionStorage.removeItem('dp_admin');
     sessionStorage.removeItem('dp_admin_name');
     localStorage.removeItem('dp_admin');

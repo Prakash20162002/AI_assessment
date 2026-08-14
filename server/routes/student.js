@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, requireStudent, requireVerified } = require('../middleware/authMiddleware');
 const {
   getAvailableExams,
+  getPublicExamDetails,
   getExamById,
   startExam,
   saveAnswer,
@@ -12,6 +13,9 @@ const {
   getResultDetail,
 } = require('../controllers/studentController');
 const { getSubjects } = require('../controllers/adminController');
+
+// Public preview route for unauthenticated / landing checks
+router.get('/exams/:id/public', getPublicExamDetails);
 
 // All student routes require authentication, student role, and verified email
 router.use(protect, requireStudent, requireVerified);

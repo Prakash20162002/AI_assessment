@@ -470,7 +470,7 @@ const getAllResults = async (req, res, next) => {
 
     let resultsQuery = Result.find(query)
       .populate('studentId', 'name email')
-      .populate('examId', 'title duration passingMarks')
+      .populate('examId', 'title subject subjectId duration passingMarks totalMarks')
       .populate('sessionId', 'warningCount status startedAt submittedAt')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -526,7 +526,7 @@ const getResultById = async (req, res, next) => {
   try {
     const result = await Result.findById(req.params.id)
       .populate('studentId', 'name email')
-      .populate('examId', 'title duration totalMarks passingMarks')
+      .populate('examId', 'title subject subjectId duration totalMarks passingMarks')
       .populate('sessionId', 'warningCount status startedAt submittedAt')
       .populate('answerBreakdown.questionId', 'questionText options marks explanation correctAnswer');
 

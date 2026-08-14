@@ -584,8 +584,8 @@ function StudentLanding() {
               title: ex.title || 'AI Proctored Assessment',
               description: ex.description || '',
               duration: (ex.duration || 10) * 60,
-              totalMarks: ex.totalMarks || 100,
-              passingMarks: ex.passingMarks || 40,
+              totalMarks: ex.totalMarks || 0,
+              passingMarks: ex.passingMarks || 0,
               questionCount: ex.questionCount || 0,
               maxWarnings: ex.maxWarnings || 3,
             });
@@ -611,14 +611,35 @@ function StudentLanding() {
           }
         } catch (err) {
           console.warn('[ASSESSMENT_LOAD_FAILED]', err.response?.status, err.message);
-          // If 401, token expired - let AuthContext handle or clear
           if (err.response?.status === 401) {
             localStorage.removeItem('accessToken');
           }
         }
       }
 
-      // 2. Fallback/Local Exam Check (or metadata preview for unauthenticated students)
+      // 2. Fetch public assessment metadata from backend (for unauthenticated or initial preview)
+      try {
+        const { data: pubData } = await api.get(`/student/exams/${examId}/public`);
+        if (pubData?.data && isMounted) {
+          const pubEx = pubData.data;
+          setExam({
+            id: pubEx._id || pubEx.id || examId,
+            title: pubEx.title || 'AI Proctored Assessment',
+            description: pubEx.description || '',
+            duration: pubEx.duration || 600,
+            totalMarks: pubEx.totalMarks || 0,
+            passingMarks: pubEx.passingMarks || 0,
+            questionCount: pubEx.questionCount || 0,
+            maxWarnings: pubEx.maxWarnings || 3,
+          });
+          setExamStatus('ready');
+          return;
+        }
+      } catch (pubErr) {
+        console.log('[PUBLIC_EXAM_PREVIEW_NOTE]', pubErr.message);
+      }
+
+      // 3. Fallback/Local Exam Check (if completely offline)
       try {
         const exams = DB.exams.get();
         let found = exams.find(e => e.id === examId);
@@ -628,8 +649,9 @@ function StudentLanding() {
             subjectId: 's1',
             title: 'AI Proctored Assessment',
             duration: 600,
-            totalMarks: 20,
-            passingMarks: 8,
+            totalMarks: 40,
+            passingMarks: 16,
+            questionCount: 0,
             createdAt: new Date().toISOString()
           };
         }
@@ -855,8 +877,8 @@ function StudentLanding() {
     );
   }
 
-  const totalMarks = exam?.totalMarks || questions?.reduce((s, q) => s + (q.marks || 0), 0) || 100;
-  const questionCount = exam?.questionCount || questions?.length || 4;
+  const totalMarks = exam?.totalMarks !== undefined ? exam.totalMarks : (questions?.reduce((s, q) => s + (q.marks || 0), 0) || 0);
+  const questionCount = exam?.questionCount !== undefined ? exam.questionCount : (questions?.length || 0);
   const durationMinutes = Math.floor((exam?.duration || 600) / 60);
 
   return (
@@ -1438,23 +1460,42 @@ function ExamTake() {
     return r;
   }, [answers, questions, examId, studentName, timeLeft, exam]);
 
-  const doSubmit = useCallback((cheated = false, timeUp = false) => {
+  const doSubmit = useCallback(async (cheated = false, timeUp = false) => {
     if (!questions.length) return;
-    const r = saveResult(cheated);
-    if (studentName && examId) {
-      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
-    }
     clearInterval(timerRef.current);
     stopCameraAndExamProctoring();
     stopGlobalWebcamStreams();
+
+    const localResult = saveResult(cheated);
+    let finalResultId = localResult.id;
+
+    if (studentName && examId) {
+      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
+    }
+
+    try {
+      const { data } = await api.post(`/student/exams/${examId}/submit`, {
+        answers,
+        cheated,
+        timeUp,
+        warnings: warningCountRef.current,
+        timeTaken: (exam?.duration || 600) - timeLeft,
+      });
+      if (data?.data?.resultId || data?.data?.id || data?.data?._id) {
+        finalResultId = data.data.resultId || data.data.id || data.data._id;
+      }
+    } catch (err) {
+      console.warn('Submit API error:', err.response?.data?.message || err.message);
+    }
+
     if (!cheated) {
       if (timeUp) toast('⏰ Time is up! Exam auto-submitted.', { duration: 3000 });
       else toast.success('✅ Exam submitted successfully!');
-      navigate(`/thankyou/${r.id}`, { replace: true });
+      navigate(`/thankyou/${finalResultId}`, { replace: true });
     } else {
       navigate('/cheated', { replace: true });
     }
-  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId]);
+  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId, answers, timeLeft, exam]);
 
   const triggerViolation = useCallback((reason) => {
     if (terminatedRef.current) return;
@@ -1476,19 +1517,25 @@ function ExamTake() {
     setWarningBanner({ msg: reason, count: newCount });
     setTimeout(() => setWarningBanner(null), 4500);
 
+    api.post('/student/cheat/log', {
+      examId,
+      type: 'warning',
+      details: reason,
+    }).catch(() => {});
+
     if (newCount >= MAX_WARNINGS) {
       setTimeout(() => triggerViolation(`${MAX_WARNINGS} warnings exceeded: ${reason}`), 400);
     } else {
       toast.error(`🚨 PROCTORING ALERT (${newCount}/${MAX_WARNINGS}): ${reason}`, { duration: 4000, id: 'proctor-alert' });
     }
-  }, [triggerViolation]);
+  }, [triggerViolation, examId]);
 
   // Load exam data & start webcam (with Submission Guard)
   useEffect(() => {
-    if (!studentName) { navigate('/'); return; }
+    if (!studentName && !user) { navigate('/'); return; }
 
-    const existing = DB.results.get().find(r => r.examId === examId && r.studentName === studentName);
-    const submittedFlag = sessionStorage.getItem(`dp_submitted_${examId}_${studentName}`);
+    const existing = DB.results.get().find(r => r.examId === examId && (studentName ? r.studentName === studentName : false));
+    const submittedFlag = studentName ? sessionStorage.getItem(`dp_submitted_${examId}_${studentName}`) : null;
     if (existing || submittedFlag) {
       toast.error('🚫 Exam already submitted! Re-entry is blocked to prevent cheating.', { id: 'already-sub-ex' });
       stopGlobalWebcamStreams();
@@ -1496,29 +1543,104 @@ function ExamTake() {
       return;
     }
 
-    let ex = DB.exams.get().find(e => e.id === examId);
-    if (!ex && examId) {
-      ex = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600 };
-    }
-    if (!ex) {
-      ex = DB.exams.get()[0] || { id: 'exam_demo', subjectId: 's1', title: 'Web Development Assessment', duration: 600 };
-    }
-    setExam(ex);
-    setTimeLeft(ex.duration || 600);
+    let isMounted = true;
 
-    let qs = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
-    if (!qs || qs.length === 0) {
-      qs = DB.questions.get();
-    }
-    if (!qs || qs.length === 0) {
-      qs = SEED.questions;
-    }
-    setQuestions(qs);
+    // 1. Authoritative Backend Exam Start
+    api.post(`/student/exams/${examId}/start`)
+      .then(({ data }) => {
+        if (!isMounted) return;
+        if (data?.data) {
+          const { questions: serverQs, exam: serverExam, session: serverSession } = data.data;
+          if (serverExam) {
+            setExam({
+              id: serverExam.id || serverExam._id || examId,
+              subjectId: serverExam.subjectId || 's1',
+              title: serverExam.title || 'AI Proctored Assessment',
+              duration: (serverExam.duration || 10) * 60,
+              totalMarks: serverExam.totalMarks || 40,
+              passingMarks: serverExam.passingMarks || 16,
+              maxWarnings: serverExam.maxWarnings || 3,
+            });
+          }
+          if (serverSession) {
+            if (serverSession.timeRemaining !== undefined) {
+              setTimeLeft(serverSession.timeRemaining);
+            }
+            if (serverSession.warningCount !== undefined) {
+              warningCountRef.current = serverSession.warningCount;
+              setWarnings(serverSession.warningCount);
+            }
+            if (serverSession.answers && Array.isArray(serverSession.answers)) {
+              const existingAns = {};
+              serverSession.answers.forEach(a => {
+                if (a.questionId && a.selectedOption) {
+                  existingAns[a.questionId.toString()] = a.selectedOption;
+                }
+              });
+              setAnswers(p => ({ ...existingAns, ...p }));
+            }
+          }
+          if (serverQs && serverQs.length > 0) {
+            const formatted = serverQs.map((q) => ({
+              id: q._id || q.id,
+              subjectId: q.subjectId || serverExam?.subjectId || 's1',
+              questionText: q.questionText,
+              options: q.options || {},
+              correctAnswer: q.correctAnswer,
+              marks: Number(q.marks) > 0 ? Number(q.marks) : 1,
+              explanation: q.explanation || '',
+            }));
+            setQuestions(formatted);
+            return;
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Start exam API note:', err.response?.data?.message || err.message);
+        if (err.response?.status === 400 && err.response?.data?.message?.includes('already submitted')) {
+          toast.error('🚫 You have already submitted this assessment.');
+          navigate('/', { replace: true });
+          return;
+        }
+
+        // Fallback: try questions endpoint
+        api.get(`/admin/exams/${examId}/questions`)
+          .then(({ data }) => {
+            if (data?.data?.length > 0 && isMounted) {
+              const formatted = data.data.map((q) => ({
+                id: q._id || q.id,
+                subjectId: exam?.subjectId || 's1',
+                questionText: q.questionText,
+                options: q.options || {},
+                correctAnswer: q.correctAnswer,
+                marks: Number(q.marks) > 0 ? Number(q.marks) : 1,
+                explanation: q.explanation || '',
+              }));
+              setQuestions(formatted);
+            }
+          })
+          .catch(() => {
+            // Local DB fallback
+            let ex = DB.exams.get().find(e => e.id === examId);
+            if (!ex && examId) {
+              ex = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600 };
+            }
+            if (ex && isMounted) {
+              setExam(ex);
+              setTimeLeft(ex.duration || 600);
+              let qs = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
+              if (!qs || qs.length === 0) qs = DB.questions.get();
+              if (!qs || qs.length === 0) qs = SEED.questions;
+              setQuestions(qs);
+            }
+          });
+      });
 
     stopGlobalWebcamStreams();
 
     navigator.mediaDevices?.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } })
       .then(s => {
+        if (!isMounted) return;
         streamRef.current = s;
         registerStream(s);
         if (videoRef.current) videoRef.current.srcObject = s;
@@ -1543,32 +1665,12 @@ function ExamTake() {
     setTimeout(enterFS, 200);
 
     return () => {
+      isMounted = false;
       document.body.classList.remove('mobile-fullscreen-active');
       stopGlobalWebcamStreams();
       if (videoRef.current) videoRef.current.srcObject = null;
     };
-  }, [examId, navigate, studentName]);
-
-  // Sync questions from backend API if available
-  useEffect(() => {
-    if (!examId) return;
-    api.get(`/admin/exams/${examId}/questions`)
-      .then(({ data }) => {
-        if (data?.data?.length > 0) {
-          const formatted = data.data.map((q) => ({
-            id: q._id,
-            subjectId: exam?.subjectId || 's1',
-            questionText: q.questionText,
-            options: q.options,
-            correctAnswer: q.correctAnswer,
-            marks: q.marks || 5,
-            explanation: q.explanation || '',
-          }));
-          setQuestions(formatted);
-        }
-      })
-      .catch(() => {});
-  }, [examId, exam?.subjectId]);
+  }, [examId, navigate, studentName, user]);
 
   // Initial Fullscreen Check
   useEffect(() => {
@@ -1933,7 +2035,15 @@ function ExamTake() {
                 return (
                   <button
                     key={key}
-                    onClick={() => setAnswers(p => ({ ...p, [q.id]: key }))}
+                    onClick={() => {
+                      setAnswers(p => ({ ...p, [q.id]: key }));
+                      api.post(`/student/exams/${examId}/save-answer`, {
+                        questionId: q.id,
+                        selectedOption: key,
+                        currentQuestion: idx,
+                        timeRemaining: timeLeft,
+                      }).catch(() => {});
+                    }}
                     className={`option-btn ${sel ? 'selected' : ''}`}
                   >
                     <span className="option-key">{key}</span>
@@ -1973,8 +2083,43 @@ function ThankYouPage() {
 
   useEffect(() => {
     stopGlobalWebcamStreams();
-    const r = DB.results.get().find(r => r.id === resultId);
-    setResult(r);
+    let isMounted = true;
+
+    const loadData = async () => {
+      // 1. Try Backend API first
+      try {
+        let res = null;
+        try {
+          res = await api.get(`/student/results/${resultId}`);
+        } catch (_) {
+          try {
+            res = await api.get(`/admin/results/${resultId}`);
+          } catch (_) {}
+        }
+        if (res?.data?.data && isMounted) {
+          const d = res.data.data;
+          setResult({
+            id: d._id || resultId,
+            examId: d.examId?._id || d.examId || '',
+            studentName: d.studentId?.name || d.studentName || 'Student',
+            score: d.score,
+            totalMarks: d.totalMarks || d.examId?.totalMarks || 100,
+            warnings: d.sessionId?.warningCount || d.warnings || 0,
+            timeTaken: d.timeTaken || 0,
+            date: d.calculatedAt ? new Date(d.calculatedAt).toLocaleString() : new Date().toLocaleString(),
+          });
+          return;
+        }
+      } catch (_) {}
+
+      // 2. Fallback to localStorage
+      if (isMounted) {
+        const r = DB.results.get().find(r => r.id === resultId);
+        setResult(r);
+      }
+    };
+
+    loadData();
 
     // Trap browser back button so user cannot return to exam page
     window.history.pushState(null, "", window.location.href);
@@ -1985,6 +2130,7 @@ function ThankYouPage() {
     window.addEventListener('popstate', handlePopState);
 
     return () => {
+      isMounted = false;
       window.removeEventListener('popstate', handlePopState);
       stopGlobalWebcamStreams();
     };
@@ -2158,6 +2304,35 @@ function ResultPage() {
       }
 
       if (isMounted) {
+        const local = DB.results.get().find(r => r.id === id);
+        if (local) {
+          setResult({
+            id: local.id,
+            examId: local.examId,
+            examTitle: local.examTitle || 'AI Proctored Assessment',
+            subjectName: local.subjectName || 'General Assessment',
+            studentName: local.studentName || 'Student',
+            studentEmail: local.studentEmail || 'N/A',
+            score: local.score ?? 0,
+            totalMarks: local.totalMarks || 100,
+            passingMarks: local.passingMarks || 40,
+            percentage: local.percentage ?? 0,
+            isPassed: local.isPassed ?? false,
+            correct: local.correct ?? 0,
+            wrong: local.wrong ?? 0,
+            skipped: local.skipped ?? 0,
+            totalQuestions: local.totalQuestions || local.questions?.length || 0,
+            timeTaken: local.timeTaken || 0,
+            date: local.date || new Date().toLocaleString(),
+            answerBreakdown: local.answerBreakdown || [],
+            warningCount: local.warnings || 0,
+            cheated: local.cheated || false,
+            status: local.status || 'Completed',
+            proctorLogs: [],
+          });
+          setLoading(false);
+          return;
+        }
         setError('Assessment result record not found in the database.');
         setLoading(false);
       }
@@ -3143,17 +3318,26 @@ function AdminDashboard() {
       }
 
       if (resultsRes.status === 'fulfilled' && resultsRes.value.data?.data) {
-        const remoteResults = resultsRes.value.data.data.map(r => ({
-          id: r._id,
-          examId: r.examId?._id || r.examId,
-          studentName: r.studentId?.name || r.studentName || 'Student',
-          score: r.score,
-          totalMarks: r.totalMarks,
-          status: r.isPassed ? 'COMPLETED' : 'FAILED',
-          cheated: !r.isPassed && r.status === 'voided',
-          warnings: r.warnings || 0,
-          date: new Date(r.createdAt || Date.now()).toLocaleString(),
-        }));
+        const remoteResults = resultsRes.value.data.data.map(r => {
+          const exId = r.examId?._id ? r.examId._id.toString() : (r.examId ? r.examId.toString() : '');
+          const subId = r.examId?.subjectId?._id ? r.examId.subjectId._id.toString() : (r.examId?.subjectId ? r.examId.subjectId.toString() : (r.subjectId ? r.subjectId.toString() : ''));
+          const subName = r.examId?.subject || r.subjectName || '';
+          const isVoided = r.sessionId?.status === 'voided' || r.integrityStatus === 'Flagged' || r.status === 'voided';
+          return {
+            id: r._id,
+            examId: exId,
+            subjectId: subId,
+            subjectName: subName,
+            studentName: r.studentId?.name || r.studentName || 'Student',
+            studentEmail: r.studentId?.email || '',
+            score: r.score ?? 0,
+            totalMarks: r.totalMarks || 100,
+            status: isVoided ? 'VOIDED' : (r.isPassed ? 'PASSED' : 'FAILED'),
+            cheated: isVoided,
+            warnings: r.violationCount || r.sessionId?.warningCount || r.warnings || 0,
+            date: new Date(r.createdAt || Date.now()).toLocaleString(),
+          };
+        });
         setResults(remoteResults);
       }
 
@@ -4287,7 +4471,7 @@ function AdminDashboard() {
               const filteredResults = resultFilterSubId
                 ? results.filter(r => {
                     const ex = exams.find(e => e.id === r.examId);
-                    return ex?.subjectId === resultFilterSubId;
+                    return (ex?.subjectId === resultFilterSubId) || (r.subjectId === resultFilterSubId);
                   })
                 : results;
               return (
@@ -4331,7 +4515,7 @@ function AdminDashboard() {
                     {subjects.map(sub => {
                       const count = results.filter(r => {
                         const ex = exams.find(e => e.id === r.examId);
-                        return ex?.subjectId === sub.id;
+                        return (ex?.subjectId === sub.id) || (r.subjectId === sub.id);
                       }).length;
                       return (
                         <button
@@ -4362,7 +4546,7 @@ function AdminDashboard() {
                             </td></tr>
                           : filteredResults.map(r => {
                             const ex = exams.find(e => e.id === r.examId);
-                            const sub = ex ? subjects.find(sb => sb.id === ex.subjectId) : null;
+                            const sub = ex ? subjects.find(sb => sb.id === ex.subjectId) : (subjects.find(sb => sb.id === r.subjectId) || (r.subjectName ? { name: r.subjectName } : null));
                             return (
                               <tr key={r.id}>
                                 <td style={{ color: '#fff', fontWeight: 600 }}>{r.studentName}</td>
@@ -4374,7 +4558,7 @@ function AdminDashboard() {
                                 </td>
                                 <td style={{ fontWeight: 600 }}>{r.cheated ? '—' : `${r.score}/${r.totalMarks}`}</td>
                                 <td>{r.warnings > 0 ? <span className="badge badge-orange">{r.warnings} ⚠️</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                                <td><span className={`badge ${r.cheated ? 'badge-red' : 'badge-green'}`}>{r.status}</span></td>
+                                <td><span className={`badge ${r.cheated ? 'badge-red' : (r.status === 'PASSED' ? 'badge-green' : 'badge-orange')}`}>{r.status}</span></td>
                                 <td style={{ fontSize: 11 }}>{r.date}</td>
                                 <td style={{ textAlign: 'right' }}>
                                   <Link

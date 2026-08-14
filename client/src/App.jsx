@@ -1185,6 +1185,7 @@ function SystemCheck() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
   const [camOk, setCamOk] = useState(false);
   const [camErr, setCamErr] = useState('');
   const [internet, setInternet] = useState(navigator.onLine);
@@ -1243,20 +1244,26 @@ function SystemCheck() {
   const go = async () => {
     if (!internet) { toast.error('No internet connection'); return; }
     setStarting(true);
-    stopGlobalWebcamStreams();
-    if (videoRef.current) videoRef.current.srcObject = null;
-    document.body.classList.add('mobile-fullscreen-active');
-    if (!isMobile && (document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
-      try {
-        const el = document.documentElement;
-        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-        if (rfs) await rfs.call(el);
-      } catch (err) {
-        console.warn('Fullscreen request failed on start:', err);
+    try {
+      stopGlobalWebcamStreams();
+      if (videoRef.current) videoRef.current.srcObject = null;
+      document.body.classList.add('mobile-fullscreen-active');
+      if (!isMobile && (document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+        try {
+          const el = document.documentElement;
+          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+          if (rfs) await rfs.call(el);
+        } catch (err) {
+          console.warn('Fullscreen request failed on start:', err);
+        }
       }
+      sessionStorage.setItem('dp_start_time', Date.now().toString());
+      navigate(`/exam/${examId}/take`);
+    } catch (err) {
+      console.error('Failed to start exam:', err);
+      toast.error('Failed to initialize exam. Please try again.');
+      setStarting(false);
     }
-    sessionStorage.setItem('dp_start_time', Date.now().toString());
-    navigate(`/exam/${examId}/take`);
   };
 
   const CheckRow = ({ ok, icon: Icon, label, sub, onRetry }) => (

@@ -21,6 +21,8 @@ import RegisterPage from './pages/auth/RegisterPage.jsx';
 import OtpPage from './pages/auth/OtpPage.jsx';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.jsx';
 import StudentDashboard from './pages/student/StudentDashboard.jsx';
+import * as tf from '@tensorflow/tfjs';
+import * as cocoSsd from '@tensorflow-models/coco-ssd';
 import api from './services/api';
 
 /* ═══════════════════════════════════════════════════════
@@ -1244,11 +1246,15 @@ function SystemCheck() {
     stopGlobalWebcamStreams();
     if (videoRef.current) videoRef.current.srcObject = null;
     document.body.classList.add('mobile-fullscreen-active');
-    try {
-      const el = document.documentElement;
-      const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-      if (rfs) await rfs.call(el);
-    } catch { }
+    if (!isMobile && (document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+      try {
+        const el = document.documentElement;
+        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+        if (rfs) await rfs.call(el);
+      } catch (err) {
+        console.warn('Fullscreen request failed on start:', err);
+      }
+    }
     sessionStorage.setItem('dp_start_time', Date.now().toString());
     navigate(`/exam/${examId}/take`);
   };
@@ -1360,22 +1366,25 @@ function ExamTake() {
   const [warnings, setWarnings] = useState(0);
   const [warningBanner, setWarningBanner] = useState(null);
   const [faceApiReady, setFaceApiReady] = useState(false);
+  const [detectorReady, setDetectorReady] = useState(false);
   const [camActive, setCamActive] = useState(false);
   const [camError, setCamError] = useState('');
   // On mobile: always treat as fullscreen (native API not supported on iOS)
   const [isFullscreen, setIsFullscreen] = useState(
-    isMobile || !!(document.fullscreenElement || document.webkitFullscreenElement)
+    isMobile || !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement)
   );
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
+  const cocoModelRef = useRef(null);
   const warningCountRef = useRef(0);
   const terminatedRef = useRef(false);
   const warningCooldown = useRef(false);
   const timerRef = useRef(null);
   const mountTimeRef = useRef(Date.now());
   const isSubmittingRef = useRef(false);
+  const isDetectingRef = useRef(false);
 
   const answersRef = useRef(answers);
   const timeLeftRef = useRef(timeLeft);
@@ -1391,6 +1400,7 @@ function ExamTake() {
 
   const noFaceFramesRef = useRef(0);
   const multiFaceFramesRef = useRef(0);
+  const phoneFramesRef = useRef(0);
   const gazeFramesRef = useRef(0);
   const pitchFramesRef = useRef(0);
   const eyeFramesRef = useRef(0);
@@ -1719,25 +1729,6 @@ function ExamTake() {
     stopGlobalWebcamStreams();
     initWebcam();
 
-    const enterFS = async () => {
-      document.body.classList.add('mobile-fullscreen-active');
-      if (isMobile) {
-        setIsFullscreen(true);
-        return;
-      }
-      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        try {
-          const el = document.documentElement;
-          const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-          if (rfs) await rfs.call(el);
-          setIsFullscreen(true);
-        } catch { setIsFullscreen(true); }
-      } else {
-        setIsFullscreen(true);
-      }
-    };
-    setTimeout(enterFS, 200);
-
     return () => {
       isMounted = false;
       document.body.classList.remove('mobile-fullscreen-active');
@@ -1756,130 +1747,212 @@ function ExamTake() {
     setIsFullscreen(inFS);
   }, [isMobile]);
 
-  // Load face-api.js models
+  // Load Vision Models: COCO-SSD (Phone / Person Detection) & face-api.js (Facial Landmarks)
   useEffect(() => {
-    const loadModels = async () => {
-      const faceapi = window.faceapi;
-      if (!faceapi) { setTimeout(loadModels, 1500); return; }
+    let isMounted = true;
+    const initVisionModels = async () => {
       try {
-        const modelUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-        await faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl);
-        await faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelUrl);
-        setFaceApiReady(true);
-      } catch { }
-    };
-    loadModels();
-  }, []);
+        await tf.ready();
+        const coco = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+        if (isMounted) {
+          cocoModelRef.current = coco;
+          setDetectorReady(true);
+        }
+      } catch (err) {
+        console.warn('[COCO_SSD_INIT_ERROR]', err);
+      }
 
-  // AI Face, Head Pose, Eye Gaze & Phone Photo Detection (Interval: 1000ms, 5-frame persistence buffer)
-  useEffect(() => {
-    if (!faceApiReady || !isFullscreen) return; // Pause proctoring when exam is frozen
-    if (Date.now() - mountTimeRef.current < 5000) return; // 5-second initial grace period
-
-    const interval = setInterval(async () => {
-      if (!videoRef.current || terminatedRef.current) return;
       try {
         const faceapi = window.faceapi;
-        const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.25 });
-        const detections = await faceapi.detectAllFaces(videoRef.current, opts).withFaceLandmarks(true);
+        if (faceapi) {
+          const modelUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+          await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelUrl)
+          ]);
+          if (isMounted) setFaceApiReady(true);
+        }
+      } catch (err) {
+        console.warn('[FACEAPI_INIT_ERROR]', err);
+      }
+    };
 
-        if (detections.length === 0) {
+    initVisionModels();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // AI Face, Multiple Face & Mobile Phone Detection (Throttled 900ms Interval with Temporal Buffer)
+  useEffect(() => {
+    if (!detectorReady && !faceApiReady) return;
+    if (!isFullscreen) return; // Pause proctoring when exam is frozen
+
+    const interval = setInterval(async () => {
+      const video = videoRef.current;
+      if (
+        !video ||
+        terminatedRef.current ||
+        isDetectingRef.current ||
+        video.readyState < 2 ||
+        !video.videoWidth ||
+        !video.videoHeight ||
+        video.paused ||
+        video.ended
+      ) {
+        return;
+      }
+
+      // Initial grace period on exam mount
+      if (Date.now() - mountTimeRef.current < 4000) return;
+
+      isDetectingRef.current = true;
+
+      try {
+        const faceapi = window.faceapi;
+        let faceCount = null;
+        let landmarksData = null;
+
+        // 1. Dedicated Face Detection & Landmarks
+        if (faceApiReady && faceapi?.nets?.tinyFaceDetector?.params) {
+          try {
+            const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.30 });
+            const detections = await faceapi.detectAllFaces(video, opts).withFaceLandmarks(true);
+            faceCount = detections.length;
+            if (detections.length === 1) {
+              landmarksData = detections[0];
+            }
+          } catch (e) {
+            console.debug('[FACE_INFERENCE_ERR]', e);
+          }
+        }
+
+        // 2. Object & Phone Detection via COCO-SSD
+        let phoneDetected = false;
+        let cocoPersonCount = 0;
+
+        if (cocoModelRef.current) {
+          try {
+            const predictions = await cocoModelRef.current.detect(video, 10, 0.40);
+            predictions.forEach(p => {
+              const cls = (p.class || '').toLowerCase();
+              if (cls === 'cell phone' || cls === 'phone' || (cls === 'remote' && p.score >= 0.60)) {
+                if (p.score >= 0.45) {
+                  phoneDetected = true;
+                }
+              }
+              if (cls === 'person' && p.score >= 0.45) {
+                cocoPersonCount += 1;
+              }
+            });
+          } catch (e) {
+            console.debug('[COCO_INFERENCE_ERR]', e);
+          }
+        }
+
+        // Use COCO person count as reliable fallback if faceapi was not available
+        if (faceCount === null) {
+          faceCount = cocoPersonCount;
+        }
+
+        // ── 3. TEMPORAL EVALUATION (Do not warn for single missed frame) ──
+
+        // A. Phone Detection Evaluation
+        if (phoneDetected) {
+          phoneFramesRef.current += 1;
+          if (phoneFramesRef.current >= 3) {
+            triggerWarning('📱 Mobile Phone Detected in Camera! External devices are strictly prohibited.');
+            phoneFramesRef.current = 0;
+          }
+        } else {
+          phoneFramesRef.current = Math.max(0, phoneFramesRef.current - 1);
+        }
+
+        // B. Face Count Evaluation (0 faces / 1 face / multiple faces)
+        if (faceCount === 0) {
           noFaceFramesRef.current += 1;
+          multiFaceFramesRef.current = 0;
           gazeFramesRef.current = 0;
           pitchFramesRef.current = 0;
           eyeFramesRef.current = 0;
-          multiFaceFramesRef.current = 0;
 
-          if (noFaceFramesRef.current >= 5) {
+          if (noFaceFramesRef.current >= 4) {
             triggerWarning('📷 Face Not Detected / Camera Blocked! Stay centered in front of camera.');
             noFaceFramesRef.current = 0;
           }
-        } else if (detections.length > 1) {
+        } else if (faceCount > 1) {
           multiFaceFramesRef.current += 1;
           noFaceFramesRef.current = 0;
           gazeFramesRef.current = 0;
           pitchFramesRef.current = 0;
           eyeFramesRef.current = 0;
 
-          if (multiFaceFramesRef.current >= 4) {
+          if (multiFaceFramesRef.current >= 3) {
             triggerWarning('⚠️ Multiple Persons / Secondary Device Detected in Camera!');
             multiFaceFramesRef.current = 0;
           }
         } else {
+          // Exactly 1 face (Normal expected state)
           noFaceFramesRef.current = 0;
           multiFaceFramesRef.current = 0;
 
-          const detection = detections[0];
-          const landmarks = detection.landmarks;
-          const box = detection.detection?.box;
-          const faceWidth = box ? box.width : 160;
+          // Head Pose & Eye Gaze Evaluation when landmarks are available
+          if (landmarksData?.landmarks) {
+            const landmarks = landmarksData.landmarks;
+            const box = landmarksData.detection?.box;
+            const faceWidth = box ? box.width : 160;
 
-          if (landmarks && faceWidth > 0) {
-            const nose = landmarks.getNose();
-            const leftEye = landmarks.getLeftEye();
-            const rightEye = landmarks.getRightEye();
-            const jaw = landmarks.getJawOutline();
+            if (faceWidth > 0) {
+              const nose = landmarks.getNose();
+              const leftEye = landmarks.getLeftEye();
+              const rightEye = landmarks.getRightEye();
+              const jaw = landmarks.getJawOutline();
 
-            const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
-            const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
-            const noseX = nose[3].x;
-            const noseY = nose[3].y;
-            const jawY = jaw[8].y;
+              const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
+              const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
+              const noseX = nose[3].x;
+              const noseY = nose[3].y;
+              const jawY = jaw[8].y;
 
-            // 1. Horizontal Gaze / Head Turn (Normalized to Face Width)
-            const gazeOffset = Math.abs(eyeCenterX - noseX) / faceWidth;
+              const gazeOffset = Math.abs(eyeCenterX - noseX) / faceWidth;
+              const noseToEye = Math.abs(noseY - eyeCenterY);
+              const jawToNose = Math.abs(jawY - noseY);
+              const pitchRatio = noseToEye / (jawToNose || 1);
 
-            // 2. Vertical Pitch / Head Tilt Down (Looking down at phone in lap)
-            const noseToEye = Math.abs(noseY - eyeCenterY);
-            const jawToNose = Math.abs(jawY - noseY);
-            const pitchRatio = noseToEye / (jawToNose || 1);
-
-            // 3. Eye Height (Normalized to Face Width)
-            const leftH = Math.max(...leftEye.map(p => p.y)) - Math.min(...leftEye.map(p => p.y));
-            const rightH = Math.max(...rightEye.map(p => p.y)) - Math.min(...rightEye.map(p => p.y));
-            const maxEyeH = Math.max(leftH, rightH);
-            const normEyeH = maxEyeH / faceWidth;
-
-            // Evaluate Gaze Shift (Looking away left/right at phone or secondary screen)
-            if (gazeOffset > 0.22) {
-              gazeFramesRef.current += 1;
-              if (gazeFramesRef.current >= 5) {
-                triggerWarning('👀 Eye Gaze Shift: Looking away from exam screen!');
+              if (gazeOffset > 0.24) {
+                gazeFramesRef.current += 1;
+                if (gazeFramesRef.current >= 5) {
+                  triggerWarning('👀 Eye Gaze Shift: Looking away from exam screen!');
+                  gazeFramesRef.current = 0;
+                }
+              } else {
                 gazeFramesRef.current = 0;
               }
-            } else {
-              gazeFramesRef.current = 0;
-            }
 
-            // Evaluate Head Tilt Down (Looking down at mobile phone / paper)
-            if (pitchRatio < 0.22 || pitchRatio > 1.85) {
-              pitchFramesRef.current += 1;
-              if (pitchFramesRef.current >= 5) {
-                triggerWarning('📱 Head Tilted Down: Looking down at mobile phone / paper!');
+              if (pitchRatio < 0.20 || pitchRatio > 1.90) {
+                pitchFramesRef.current += 1;
+                if (pitchFramesRef.current >= 5) {
+                  triggerWarning('📱 Head Tilted Down: Looking down at mobile phone / paper!');
+                  pitchFramesRef.current = 0;
+                }
+              } else {
                 pitchFramesRef.current = 0;
               }
-            } else {
-              pitchFramesRef.current = 0;
-            }
-
-            // Evaluate Eye Distraction / Closed Eyes
-            if (normEyeH < 0.022) {
-              eyeFramesRef.current += 1;
-              if (eyeFramesRef.current >= 4) {
-                triggerWarning('👁️ Eye Distraction: Eyes closed or looking down at phone screen!');
-                eyeFramesRef.current = 0;
-              }
-            } else {
-              eyeFramesRef.current = 0;
             }
           }
         }
-      } catch { }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [faceApiReady, isFullscreen, triggerWarning]);
+      } catch (err) {
+        console.debug('[PROCTOR_INFERENCE_ERROR]', err);
+      } finally {
+        isDetectingRef.current = false;
+      }
+    }, 900);
 
-  // Anti-cheat: tab switch & fullscreen monitoring
+    return () => clearInterval(interval);
+  }, [detectorReady, faceApiReady, isFullscreen, triggerWarning]);
+
+  // Anti-cheat: tab switch & standard fullscreen API monitoring
   useEffect(() => {
     const onVisibility = () => {
       if (document.hidden && !terminatedRef.current) {
@@ -1892,6 +1965,13 @@ function ExamTake() {
       setIsFullscreen(inFS);
       if (!inFS && !terminatedRef.current) {
         triggerWarning('Fullscreen exited! Exam timer and questions are now FROZEN.');
+      }
+    };
+    const onFSErr = (err) => {
+      console.warn('Fullscreen error:', err);
+      if (!isMobile) {
+        const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+        setIsFullscreen(inFS);
       }
     };
     const blockCtx = e => e.preventDefault();
@@ -1909,6 +1989,9 @@ function ExamTake() {
     document.addEventListener('visibilitychange', onVisibility);
     document.addEventListener('fullscreenchange', onFS);
     document.addEventListener('webkitfullscreenchange', onFS);
+    document.addEventListener('mozfullscreenchange', onFS);
+    document.addEventListener('fullscreenerror', onFSErr);
+    document.addEventListener('webkitfullscreenerror', onFSErr);
     document.addEventListener('contextmenu', blockCtx);
     document.addEventListener('keydown', blockKeys);
 
@@ -1916,6 +1999,9 @@ function ExamTake() {
       document.removeEventListener('visibilitychange', onVisibility);
       document.removeEventListener('fullscreenchange', onFS);
       document.removeEventListener('webkitfullscreenchange', onFS);
+      document.removeEventListener('mozfullscreenchange', onFS);
+      document.removeEventListener('fullscreenerror', onFSErr);
+      document.removeEventListener('webkitfullscreenerror', onFSErr);
       document.removeEventListener('contextmenu', blockCtx);
       document.removeEventListener('keydown', blockKeys);
     };
@@ -1944,17 +2030,24 @@ function ExamTake() {
 
   const resumeFullscreen = async () => {
     document.body.classList.add('mobile-fullscreen-active');
-    setIsFullscreen(true);
     if (isMobile) {
+      setIsFullscreen(true);
       toast.success('📱 Mobile exam view active. Timer resumed.');
       return;
     }
-    try {
-      const el = document.documentElement;
-      const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
-      if (rfs) await rfs.call(el);
-      toast.success('Fullscreen resumed. Timer active.');
-    } catch {
+    if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+      try {
+        const el = document.documentElement;
+        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+        if (rfs) await rfs.call(el);
+        setIsFullscreen(true);
+        toast.success('Fullscreen resumed. Timer active.');
+      } catch (err) {
+        console.warn('Resume fullscreen error:', err);
+        toast.error('Unable to enter fullscreen mode. Please check browser permissions.');
+      }
+    } else {
+      setIsFullscreen(true);
       toast.success('Exam view active. Timer resumed.');
     }
   };

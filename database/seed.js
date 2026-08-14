@@ -19,6 +19,13 @@ const seedAdmins = async () => {
     // Password values are immediately hashed with bcrypt (salt factor 12) via User pre-save hook
     const defaultAdmins = [
       {
+        name: 'Prakash Halwai',
+        email: 'prakashhalwai59@gmail.com',
+        password: process.env.DEFAULT_ADMIN_PASSWORD || 'DevPhoenix@Admin2026!',
+        role: 'admin',
+        isVerified: true,
+      },
+      {
         name: 'Nilesh Maity',
         email: 'nilesh@devphoenix.com',
         password: process.env.DEFAULT_ADMIN_PASSWORD || 'DevPhoenix@Admin2026!',
@@ -28,13 +35,6 @@ const seedAdmins = async () => {
       {
         name: 'Rohit Pandit',
         email: 'rohit@devphoenix.com',
-        password: process.env.DEFAULT_ADMIN_PASSWORD || 'DevPhoenix@Admin2026!',
-        role: 'admin',
-        isVerified: true,
-      },
-      {
-        name: 'Prakash Halwai',
-        email: 'prakash@devphoenix.com',
         password: process.env.DEFAULT_ADMIN_PASSWORD || 'DevPhoenix@Admin2026!',
         role: 'admin',
         isVerified: true,
@@ -50,26 +50,16 @@ const seedAdmins = async () => {
       });
 
       if (existing) {
-        let modified = false;
-        if (existing.role !== 'admin') {
-          existing.role = 'admin';
-          modified = true;
-        }
-        if (!existing.isVerified) {
-          existing.isVerified = true;
-          modified = true;
-        }
-        if (modified) {
-          await existing.save();
-          console.log(`🆙 Updated existing user to admin: ${adminData.name} (${adminData.email})`);
-        } else {
-          console.log(`ℹ️  Admin already configured: ${adminData.name} (${adminData.email})`);
-        }
+        existing.role = 'admin';
+        existing.isVerified = true;
+        existing.password = adminData.password; // pre-save hook hashes with bcrypt
+        await existing.save();
+        console.log(`🆙 Updated existing admin & reset password: ${adminData.name} (${existing.email})`);
       } else {
         const newAdmin = new User({
           name: adminData.name,
           email: adminData.email.toLowerCase(),
-          password: adminData.password, // hashed via pre-save hook
+          password: adminData.password, // pre-save hook hashes with bcrypt
           role: 'admin',
           isVerified: true,
         });

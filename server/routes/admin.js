@@ -27,6 +27,11 @@ const {
   createSubject,
   updateSubject,
   deleteSubject,
+  getChapters,
+  createChapter,
+  updateChapter,
+  reorderChapter,
+  deleteChapter,
   getStudents,
   updateStudent,
   deleteStudent,
@@ -69,6 +74,12 @@ router.get('/stats', getDashboardStats);
 // Subject management
 router.route('/subjects').get(getSubjects).post(createSubject);
 router.route('/subjects/:id').put(updateSubject).delete(deleteSubject);
+
+// Chapter management
+router.route('/chapters').get(getChapters).post(createChapter);
+router.route('/subjects/:subjectId/chapters').get(getChapters).post(createChapter);
+router.route('/chapters/:id').put(updateChapter).delete(deleteChapter);
+router.patch('/chapters/:id/order', reorderChapter);
 
 // Student management
 router.route('/students').get(getStudents).delete(clearAllStudents);

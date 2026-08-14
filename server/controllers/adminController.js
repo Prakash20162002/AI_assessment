@@ -5,6 +5,7 @@ const Result = require('../models/Result');
 const ExamSession = require('../models/ExamSession');
 const CheatingLog = require('../models/CheatingLog');
 const Subject = require('../models/Subject');
+const Chapter = require('../models/Chapter');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
@@ -116,7 +117,7 @@ const syncExamStats = async (examId) => {
 
 // ─── Question Management ──────────────────────────────────────────────────────
 
-// @desc    Get questions (all platform questions, or filtered by subjectId / examId)
+// @desc    Get questions (all platform questions, or filtered by subjectId / chapterId / examId)
 // @route   GET /api/admin/questions OR GET /api/admin/exams/:id/questions
 const getQuestions = async (req, res, next) => {
   try {
@@ -131,12 +132,20 @@ const getQuestions = async (req, res, next) => {
       }
     } else {
       if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+      if (req.query.chapterId) {
+        if (req.query.chapterId === 'unassigned' || req.query.chapterId === 'null') {
+          filter.chapterId = null;
+        } else {
+          filter.chapterId = req.query.chapterId;
+        }
+      }
       if (req.query.examId) filter.examId = req.query.examId;
     }
 
     const questions = await Question.find(filter)
       .sort({ createdAt: 1, order: 1 })
       .populate('subjectId', 'name color')
+      .populate('chapterId', 'name order')
       .populate('examId', 'title');
 
     const normalizedQuestions = questions.map((q) => {
@@ -145,6 +154,8 @@ const getQuestions = async (req, res, next) => {
         ...qObj,
         id: qObj._id,
         subjectId: qObj.subjectId?._id ? qObj.subjectId._id.toString() : (qObj.subjectId ? qObj.subjectId.toString() : ''),
+        chapterId: qObj.chapterId?._id ? qObj.chapterId._id.toString() : (qObj.chapterId ? qObj.chapterId.toString() : null),
+        chapterName: qObj.chapterId?.name || qObj.chapterName || '',
         marks: Number(qObj.marks) > 0 ? Number(qObj.marks) : 1,
       };
     });
@@ -155,11 +166,11 @@ const getQuestions = async (req, res, next) => {
   }
 };
 
-// @desc    Add a single question (supports Subject Bank and Exam assignment)
+// @desc    Add a single question (supports Subject Bank, Chapter, and Exam assignment)
 // @route   POST /api/admin/questions OR POST /api/admin/exams/:id/questions
 const addQuestion = async (req, res, next) => {
   try {
-    const { subjectId, questionText, options, correctAnswer, marks, explanation, examId } = req.body;
+    const { subjectId, chapterId, questionText, options, correctAnswer, marks, explanation, examId } = req.body;
     const targetExamId = req.params.id || examId || null;
 
     if (!questionText || !questionText.trim()) {
@@ -183,6 +194,19 @@ const addQuestion = async (req, res, next) => {
 
     let resolvedSubjectId = subjectId || null;
     let resolvedSubjectName = '';
+    let resolvedChapterId = null;
+    let resolvedChapterName = '';
+
+    if (chapterId && chapterId !== 'unassigned') {
+      const chapter = await Chapter.findById(chapterId);
+      if (chapter) {
+        resolvedChapterId = chapter._id;
+        resolvedChapterName = chapter.name;
+        if (!resolvedSubjectId) {
+          resolvedSubjectId = chapter.subjectId;
+        }
+      }
+    }
 
     if (resolvedSubjectId) {
       const sub = await Subject.findById(resolvedSubjectId);
@@ -214,6 +238,8 @@ const addQuestion = async (req, res, next) => {
       explanation: (explanation || '').trim(),
       subjectId: resolvedSubjectId,
       subjectName: resolvedSubjectName,
+      chapterId: resolvedChapterId,
+      chapterName: resolvedChapterName,
       examId: targetExamId,
       order: count,
       createdBy: req.user?._id || null,
@@ -304,7 +330,7 @@ const updateQuestion = async (req, res, next) => {
     const question = await Question.findById(req.params.id);
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
 
-    const { questionText, options, correctAnswer, marks, explanation, subjectId, examId } = req.body;
+    const { questionText, options, correctAnswer, marks, explanation, subjectId, chapterId, examId } = req.body;
 
     if (questionText && questionText.trim()) question.questionText = questionText.trim();
     if (options) {
@@ -332,6 +358,21 @@ const updateQuestion = async (req, res, next) => {
         question.subjectName = sub.name;
       }
     }
+
+    if (chapterId !== undefined) {
+      if (!chapterId || chapterId === 'unassigned' || chapterId === 'null') {
+        question.chapterId = null;
+        question.chapterName = '';
+      } else {
+        const chap = await Chapter.findById(chapterId);
+        if (chap) {
+          question.chapterId = chap._id;
+          question.chapterName = chap.name;
+          question.subjectId = chap.subjectId;
+        }
+      }
+    }
+
     if (examId !== undefined) question.examId = examId || null;
 
     await question.save();
@@ -853,6 +894,9 @@ const deleteSubject = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Subject not found' });
     }
 
+    // Cascade delete chapters associated with this subject
+    await Chapter.deleteMany({ subjectId: subject._id });
+
     // Cascade delete questions associated with this subject to prevent orphaned questions
     await Question.deleteMany({
       $or: [{ subjectId: subject._id }, { subjectName: subject.name }],
@@ -864,7 +908,213 @@ const deleteSubject = async (req, res, next) => {
     });
 
     await subject.deleteOne();
-    res.json({ success: true, message: 'Subject and associated questions and exams deleted successfully' });
+    res.json({ success: true, message: 'Subject and associated chapters, questions, and exams deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Chapter Management ───────────────────────────────────────────────────────
+
+// @desc    Get all chapters (optionally filtered by subjectId)
+// @route   GET /api/admin/chapters OR GET /api/admin/subjects/:subjectId/chapters
+const getChapters = async (req, res, next) => {
+  try {
+    const targetSubjectId = req.params.subjectId || req.query.subjectId;
+    const filter = {};
+    if (targetSubjectId) filter.subjectId = targetSubjectId;
+
+    const chapters = await Chapter.find(filter)
+      .sort({ order: 1, createdAt: 1 })
+      .populate('subjectId', 'name color');
+
+    const chaptersWithStats = await Promise.all(
+      chapters.map(async (chap) => {
+        const chapObj = chap.toObject();
+        const [questionCount, questions] = await Promise.all([
+          Question.countDocuments({ chapterId: chap._id }),
+          Question.find({ chapterId: chap._id }).select('marks'),
+        ]);
+        const totalMarks = questions.reduce((sum, q) => sum + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0);
+        return {
+          ...chapObj,
+          id: chapObj._id.toString(),
+          subjectId: chapObj.subjectId?._id ? chapObj.subjectId._id.toString() : (chapObj.subjectId ? chapObj.subjectId.toString() : ''),
+          questionCount,
+          totalMarks,
+        };
+      })
+    );
+
+    res.json({ success: true, count: chaptersWithStats.length, data: chaptersWithStats });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create a chapter
+// @route   POST /api/admin/chapters OR POST /api/admin/subjects/:subjectId/chapters
+const createChapter = async (req, res, next) => {
+  try {
+    const targetSubjectId = req.params.subjectId || req.body.subjectId;
+    const { name, description, order, isActive } = req.body;
+
+    if (!targetSubjectId) {
+      return res.status(400).json({ success: false, message: 'Subject ID is required' });
+    }
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Chapter name is required' });
+    }
+
+    const subject = await Subject.findById(targetSubjectId);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'Subject not found' });
+    }
+
+    const cleanName = name.trim();
+    const existing = await Chapter.findOne({
+      subjectId: targetSubjectId,
+      name: new RegExp('^' + cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
+    });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'A chapter with this name already exists under this subject' });
+    }
+
+    let chapterOrder = 1;
+    if (order !== undefined && order !== null && order !== '') {
+      const parsed = Number(order);
+      if (!isNaN(parsed) && parsed > 0) chapterOrder = parsed;
+    } else {
+      const existingCount = await Chapter.countDocuments({ subjectId: targetSubjectId });
+      chapterOrder = existingCount + 1;
+    }
+
+    const chapter = await Chapter.create({
+      subjectId: targetSubjectId,
+      name: cleanName,
+      description: (description || '').trim(),
+      order: chapterOrder,
+      isActive: isActive !== undefined ? !!isActive : true,
+      createdBy: req.user?._id || null,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        ...chapter.toObject(),
+        id: chapter._id.toString(),
+        questionCount: 0,
+        totalMarks: 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update a chapter
+// @route   PUT /api/admin/chapters/:id
+const updateChapter = async (req, res, next) => {
+  try {
+    const chapter = await Chapter.findById(req.params.id);
+    if (!chapter) {
+      return res.status(404).json({ success: false, message: 'Chapter not found' });
+    }
+
+    const { name, description, order, isActive, subjectId } = req.body;
+
+    if (name && name.trim()) {
+      const cleanName = name.trim();
+      const existing = await Chapter.findOne({
+        _id: { $ne: chapter._id },
+        subjectId: chapter.subjectId,
+        name: new RegExp('^' + cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Another chapter with this name already exists under this subject' });
+      }
+      chapter.name = cleanName;
+      await Question.updateMany({ chapterId: chapter._id }, { chapterName: cleanName });
+    }
+
+    if (description !== undefined) chapter.description = description.trim();
+    if (order !== undefined && order !== null && order !== '') {
+      const parsed = Number(order);
+      if (!isNaN(parsed) && parsed > 0) chapter.order = parsed;
+    }
+    if (isActive !== undefined) chapter.isActive = !!isActive;
+    if (subjectId) {
+      const sub = await Subject.findById(subjectId);
+      if (sub) {
+        chapter.subjectId = sub._id;
+        await Question.updateMany({ chapterId: chapter._id }, { subjectId: sub._id, subjectName: sub.name });
+      }
+    }
+
+    await chapter.save();
+
+    const [questionCount, questions] = await Promise.all([
+      Question.countDocuments({ chapterId: chapter._id }),
+      Question.find({ chapterId: chapter._id }).select('marks'),
+    ]);
+    const totalMarks = questions.reduce((sum, q) => sum + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0);
+
+    res.json({
+      success: true,
+      data: {
+        ...chapter.toObject(),
+        id: chapter._id.toString(),
+        questionCount,
+        totalMarks,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reorder chapter
+// @route   PATCH /api/admin/chapters/:id/order
+const reorderChapter = async (req, res, next) => {
+  try {
+    const { order } = req.body;
+    if (order === undefined || isNaN(Number(order))) {
+      return res.status(400).json({ success: false, message: 'Valid order number is required' });
+    }
+
+    const chapter = await Chapter.findByIdAndUpdate(
+      req.params.id,
+      { order: Number(order) },
+      { new: true }
+    );
+    if (!chapter) return res.status(404).json({ success: false, message: 'Chapter not found' });
+
+    res.json({ success: true, data: chapter });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete chapter (safely moves questions to Unassigned, NEVER deletes questions)
+// @route   DELETE /api/admin/chapters/:id
+const deleteChapter = async (req, res, next) => {
+  try {
+    const chapter = await Chapter.findById(req.params.id);
+    if (!chapter) {
+      return res.status(404).json({ success: false, message: 'Chapter not found' });
+    }
+
+    // Safety rule: Unassign questions so question count & question data are NEVER destroyed
+    await Question.updateMany(
+      { chapterId: chapter._id },
+      { $set: { chapterId: null, chapterName: '' } }
+    );
+
+    await chapter.deleteOne();
+    res.json({
+      success: true,
+      message: 'Chapter deleted successfully. Any associated questions have been safely moved to Unassigned.',
+    });
   } catch (error) {
     next(error);
   }
@@ -974,6 +1224,11 @@ module.exports = {
   createSubject,
   updateSubject,
   deleteSubject,
+  getChapters,
+  createChapter,
+  updateChapter,
+  reorderChapter,
+  deleteChapter,
   getStudents,
   updateStudent,
   deleteStudent,

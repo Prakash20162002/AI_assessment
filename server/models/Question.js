@@ -13,6 +13,17 @@ const questionSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    chapterId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Chapter',
+      index: true,
+      default: null,
+    },
+    chapterName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     examId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Exam',
@@ -63,6 +74,7 @@ const questionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+questionSchema.index({ subjectId: 1, chapterId: 1 });
 questionSchema.index({ examId: 1, order: 1 });
 
 module.exports = mongoose.model('Question', questionSchema);

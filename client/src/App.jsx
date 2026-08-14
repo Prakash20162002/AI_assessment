@@ -3380,6 +3380,76 @@ function AdminDashboard() {
     }
   });
 
+  const getStudentSubjects = (s) => {
+    const studentSubs = [];
+    const seenSubIds = new Set();
+
+    if (Array.isArray(s.subjects) && s.subjects.length > 0) {
+      s.subjects.forEach(sub => {
+        const subId = sub.id || sub._id || sub.name;
+        if (!seenSubIds.has(subId)) {
+          seenSubIds.add(subId);
+          const matched = subjects.find(sb => sb.id === subId || sb._id === subId || sb.name.toLowerCase() === (sub.name || '').toLowerCase());
+          studentSubs.push(matched || sub);
+        }
+      });
+    }
+
+    const allExamIds = [
+      ...(Array.isArray(s.examIds) ? s.examIds : []),
+      ...(Array.isArray(s.examSessions) ? s.examSessions.map(es => es.examId?._id || es.examId) : []),
+      ...(s.examId ? [s.examId] : []),
+    ].filter(Boolean);
+
+    allExamIds.forEach(eId => {
+      const ex = exams.find(e => e.id === eId || e._id === eId);
+      if (ex) {
+        const sub = subjects.find(sb => sb.id === ex.subjectId || sb._id === ex.subjectId || (ex.subject && sb.name.toLowerCase() === ex.subject.toLowerCase()));
+        if (sub && !seenSubIds.has(sub.id)) {
+          seenSubIds.add(sub.id);
+          studentSubs.push(sub);
+        } else if (!sub && ex.subject && !seenSubIds.has(ex.subject)) {
+          seenSubIds.add(ex.subject);
+          studentSubs.push({ id: ex.subject, name: ex.subject, color: 'var(--primary)' });
+        }
+      }
+    });
+
+    return studentSubs;
+  };
+
+  const getStudentExams = (s) => {
+    const studentExams = [];
+    const seenExamIds = new Set();
+
+    if (Array.isArray(s.exams) && s.exams.length > 0) {
+      s.exams.forEach(ex => {
+        const exId = ex.id || ex._id;
+        if (!seenExamIds.has(exId)) {
+          seenExamIds.add(exId);
+          studentExams.push(ex);
+        }
+      });
+    }
+
+    const allExamIds = [
+      ...(Array.isArray(s.examIds) ? s.examIds : []),
+      ...(Array.isArray(s.examSessions) ? s.examSessions.map(es => es.examId?._id || es.examId) : []),
+      ...(s.examId ? [s.examId] : []),
+    ].filter(Boolean);
+
+    allExamIds.forEach(eId => {
+      if (!seenExamIds.has(eId)) {
+        seenExamIds.add(eId);
+        const ex = exams.find(e => e.id === eId || e._id === eId);
+        if (ex) studentExams.push(ex);
+        else studentExams.push({ id: eId, title: eId });
+      }
+    });
+
+    return studentExams;
+  };
+
   const reload = async () => {
     try {
       const [subsRes, chapsRes, qsRes, examsRes, resultsRes, studentsRes] = await Promise.allSettled([
@@ -3473,11 +3543,21 @@ function AdminDashboard() {
 
       if (studentsRes.status === 'fulfilled' && studentsRes.value.data?.data) {
         const remoteStudents = studentsRes.value.data.data.map(st => ({
-          id: st._id,
+          id: st._id || st.id,
           name: st.name,
           email: st.email,
           isVerified: st.isVerified,
-          joinedAt: st.createdAt || new Date().toISOString(),
+          joinedAt: st.createdAt || st.joinedAt || new Date().toISOString(),
+          examId: st.examId || (st.exams?.[0]?.id) || (st.examSessions?.[0]?.examId) || '',
+          examTitle: st.examTitle || (st.exams?.[0]?.title) || '',
+          examIds: st.examIds || (st.exams?.map(e => e.id) || []),
+          exams: st.exams || [],
+          subject: st.subject || (st.subjects?.[0]?.name) || '',
+          subjectId: st.subjectId || (st.subjects?.[0]?.id) || '',
+          subjects: st.subjects || [],
+          subjectNames: st.subjectNames || (st.subjects?.map(s => s.name) || []),
+          subjectIds: st.subjectIds || (st.subjects?.map(s => s.id) || []),
+          examSessions: st.examSessions || [],
         }));
         setStudents(remoteStudents);
       }
@@ -4471,8 +4551,8 @@ function AdminDashboard() {
             {tab === 'students' && (() => {
               const filteredStudents = studentFilterSubId
                 ? students.filter(s => {
-                    const ex = exams.find(e => e.id === s.examId);
-                    return ex?.subjectId === studentFilterSubId;
+                    const studentSubs = getStudentSubjects(s);
+                    return studentSubs.some(sub => sub.id === studentFilterSubId || sub._id === studentFilterSubId || (sub.name && subjects.find(sb => sb.id === studentFilterSubId)?.name.toLowerCase() === sub.name.toLowerCase()));
                   })
                 : students;
               return (
@@ -4501,8 +4581,8 @@ function AdminDashboard() {
                     </button>
                     {subjects.map(sub => {
                       const count = students.filter(s => {
-                        const ex = exams.find(e => e.id === s.examId);
-                        return ex?.subjectId === sub.id;
+                        const studentSubs = getStudentSubjects(s);
+                        return studentSubs.some(sb => sb.id === sub.id || sb._id === sub.id || (sb.name && sb.name.toLowerCase() === sub.name.toLowerCase()));
                       }).length;
                       return (
                         <button
@@ -4541,8 +4621,8 @@ function AdminDashboard() {
                               {students.length === 0 ? 'No students registered yet.' : 'No students found for this subject.'}
                             </td></tr>
                           : filteredStudents.map((s, i) => {
-                            const ex = exams.find(e => e.id === s.examId);
-                            const sub = ex ? subjects.find(sb => sb.id === ex.subjectId) : null;
+                            const studentSubs = getStudentSubjects(s);
+                            const studentExs = getStudentExams(s);
                             const isEditing = editStudentId === s.id;
                             return (
                               <tr key={s.id}>
@@ -4567,12 +4647,40 @@ function AdminDashboard() {
                                   )}
                                 </td>
                                 <td>
-                                  {sub
-                                    ? <span className="badge badge-orange" style={{ fontSize: 10 }}>{sub.name}</span>
-                                    : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
-                                  }
+                                  {studentSubs.length > 0 ? (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                                      {studentSubs.map(sub => (
+                                        <span
+                                          key={sub.id || sub.name}
+                                          className="badge badge-orange"
+                                          style={{
+                                            fontSize: 10,
+                                            background: sub.color ? `${sub.color}20` : undefined,
+                                            borderColor: sub.color ? `${sub.color}50` : undefined,
+                                            color: sub.color || undefined,
+                                          }}
+                                        >
+                                          {sub.name}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                                  )}
                                 </td>
-                                <td style={{ fontSize: 12 }}>{ex?.title || s.examId}</td>
+                                <td style={{ fontSize: 12 }}>
+                                  {studentExs.length > 0 ? (
+                                    studentExs.length === 1 ? (
+                                      <span>{studentExs[0].title || studentExs[0].id}</span>
+                                    ) : (
+                                      <span title={studentExs.map(e => e.title || e.id).join(', ')}>
+                                        {studentExs[0].title || studentExs[0].id} <span style={{ color: 'var(--primary-light)', fontSize: 11, fontWeight: 600 }}>+{studentExs.length - 1} more</span>
+                                      </span>
+                                    )
+                                  ) : (
+                                    <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                  )}
+                                </td>
                                 <td style={{ fontSize: 11 }}>{new Date(s.joinedAt).toLocaleString()}</td>
                                 <td>
                                   <div style={{ display: 'flex', gap: 6 }}>

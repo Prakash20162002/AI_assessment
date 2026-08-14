@@ -1122,14 +1122,160 @@ const deleteChapter = async (req, res, next) => {
 
 // ─── Student Management ───────────────────────────────────────────────────────
 
-// @desc    Get all students
+// @desc    Get all students with associated exam sessions and subjects
 // @route   GET /api/admin/students
 const getStudents = async (req, res, next) => {
   try {
     const students = await User.find({ role: 'student' })
       .select('-password -otp -otpExpiry -refreshToken')
-      .sort({ createdAt: -1 });
-    res.json({ success: true, count: students.length, data: students });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!students.length) {
+      return res.json({ success: true, count: 0, data: [] });
+    }
+
+    const studentIds = students.map(s => s._id);
+
+    // 1. Fetch ExamSessions for these students
+    const sessions = await ExamSession.find({ studentId: { $in: studentIds } })
+      .populate({
+        path: 'examId',
+        select: 'title subject subjectId duration totalMarks passingMarks',
+        populate: {
+          path: 'subjectId',
+          select: 'name color description',
+        },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // 2. Fetch Results for these students (if any)
+    const results = await Result.find({ studentId: { $in: studentIds } })
+      .populate({
+        path: 'examId',
+        select: 'title subject subjectId duration totalMarks passingMarks',
+        populate: {
+          path: 'subjectId',
+          select: 'name color description',
+        },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // 3. Map sessions and results by studentId
+    const sessionsByStudent = {};
+    const resultsByStudent = {};
+
+    sessions.forEach(sess => {
+      const sId = sess.studentId.toString();
+      if (!sessionsByStudent[sId]) sessionsByStudent[sId] = [];
+      sessionsByStudent[sId].push(sess);
+    });
+
+    results.forEach(res => {
+      const sId = res.studentId.toString();
+      if (!resultsByStudent[sId]) resultsByStudent[sId] = [];
+      resultsByStudent[sId].push(res);
+    });
+
+    // 4. Fetch all subjects to resolve subject names/ids if needed
+    const allSubjects = await Subject.find().lean();
+    const subjectMapById = {};
+    const subjectMapByName = {};
+    allSubjects.forEach(sub => {
+      subjectMapById[sub._id.toString()] = sub;
+      subjectMapByName[sub.name.trim().toLowerCase()] = sub;
+    });
+
+    // 5. Enrich each student with their actual exam sessions, exams, and subjects
+    const enrichedStudents = students.map(student => {
+      const sId = student._id.toString();
+      const studentSessions = sessionsByStudent[sId] || [];
+      const studentResults = resultsByStudent[sId] || [];
+
+      const examMap = {};
+      const subjectMap = {};
+
+      const processExam = (exam) => {
+        if (!exam) return;
+        const examIdStr = (exam._id || exam.id || exam).toString();
+        if (!examMap[examIdStr]) {
+          examMap[examIdStr] = {
+            id: examIdStr,
+            _id: examIdStr,
+            title: exam.title || 'Assessment',
+          };
+        }
+
+        let subObj = null;
+        if (exam.subjectId && typeof exam.subjectId === 'object' && exam.subjectId.name) {
+          subObj = {
+            id: (exam.subjectId._id || exam.subjectId.id).toString(),
+            _id: (exam.subjectId._id || exam.subjectId.id).toString(),
+            name: exam.subjectId.name,
+            color: exam.subjectId.color || '#e63946',
+          };
+        } else if (exam.subjectId && subjectMapById[exam.subjectId.toString()]) {
+          const s = subjectMapById[exam.subjectId.toString()];
+          subObj = {
+            id: s._id.toString(),
+            _id: s._id.toString(),
+            name: s.name,
+            color: s.color || '#e63946',
+          };
+        } else if (exam.subject && typeof exam.subject === 'string' && exam.subject.trim()) {
+          const cleanName = exam.subject.trim();
+          const matched = subjectMapByName[cleanName.toLowerCase()];
+          subObj = {
+            id: matched ? matched._id.toString() : cleanName,
+            _id: matched ? matched._id.toString() : cleanName,
+            name: matched ? matched.name : cleanName,
+            color: matched ? matched.color : '#e63946',
+          };
+        }
+
+        if (subObj) {
+          subjectMap[subObj.id] = subObj;
+          examMap[examIdStr].subjectId = subObj.id;
+          examMap[examIdStr].subjectName = subObj.name;
+        }
+      };
+
+      studentSessions.forEach(sess => {
+        if (sess.examId) processExam(sess.examId);
+      });
+
+      studentResults.forEach(res => {
+        if (res.examId) processExam(res.examId);
+      });
+
+      const uniqueExams = Object.values(examMap);
+      const uniqueSubjects = Object.values(subjectMap);
+
+      return {
+        ...student,
+        examId: uniqueExams.length > 0 ? uniqueExams[0].id : '',
+        examTitle: uniqueExams.length > 0 ? uniqueExams[0].title : '',
+        examIds: uniqueExams.map(e => e.id),
+        exams: uniqueExams,
+        subject: uniqueSubjects.length > 0 ? uniqueSubjects[0].name : '',
+        subjectId: uniqueSubjects.length > 0 ? uniqueSubjects[0].id : '',
+        subjectIds: uniqueSubjects.map(s => s.id),
+        subjectNames: uniqueSubjects.map(s => s.name),
+        subjects: uniqueSubjects,
+        examSessions: studentSessions.map(sess => ({
+          id: sess._id,
+          status: sess.status,
+          examId: sess.examId?._id || sess.examId,
+          examTitle: sess.examId?.title,
+          startedAt: sess.startedAt,
+          submittedAt: sess.submittedAt,
+        })),
+      };
+    });
+
+    res.json({ success: true, count: enrichedStudents.length, data: enrichedStudents });
   } catch (error) {
     next(error);
   }

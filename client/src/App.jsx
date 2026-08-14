@@ -1398,12 +1398,15 @@ function ExamTake() {
   const questionsRef = useRef(questions);
   const examRef = useRef(exam);
   const studentNameRef = useRef(studentName);
+  const endTimeRef = useRef(null);
+  const doSubmitRef = useRef(null);
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
   useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
   useEffect(() => { questionsRef.current = questions; }, [questions]);
   useEffect(() => { examRef.current = exam; }, [exam]);
   useEffect(() => { studentNameRef.current = studentName; }, [studentName]);
+  useEffect(() => { doSubmitRef.current = doSubmit; }, [doSubmit]);
 
   const noFaceFramesRef = useRef(0);
   const multiFaceFramesRef = useRef(0);
@@ -1647,15 +1650,36 @@ function ExamTake() {
         if (data?.data) {
           const { questions: serverQs, exam: serverExam, session: serverSession } = data.data;
           if (serverExam) {
+            const durSec = (serverExam.duration || 10) * (serverExam.duration > 300 ? 1 : 60);
             setExam({
               id: serverExam.id || serverExam._id || examId,
               subjectId: serverExam.subjectId || 's1',
               title: serverExam.title || 'AI Proctored Assessment',
-              duration: (serverExam.duration || 10) * 60,
+              duration: durSec,
               totalMarks: serverExam.totalMarks || 40,
               passingMarks: serverExam.passingMarks || 16,
               maxWarnings: serverExam.maxWarnings || 3,
             });
+
+            // Establish persistent session start and end timestamps
+            let sessionStartMs = serverSession?.startedAt ? new Date(serverSession.startedAt).getTime() : null;
+            if (!sessionStartMs || isNaN(sessionStartMs)) {
+              sessionStartMs = parseInt(sessionStorage.getItem(`dp_start_time_${examId}`) || sessionStorage.getItem('dp_start_time') || Date.now().toString(), 10);
+            }
+            sessionStorage.setItem(`dp_start_time_${examId}`, sessionStartMs.toString());
+
+            let endMs;
+            if (serverSession?.timeRemaining !== undefined && serverSession.timeRemaining > 0) {
+              endMs = Date.now() + (serverSession.timeRemaining * 1000);
+            } else {
+              endMs = sessionStartMs + (durSec * 1000);
+            }
+
+            endTimeRef.current = endMs;
+            sessionStorage.setItem(`dp_end_time_${examId}`, endMs.toString());
+            const rem = Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+            setTimeLeft(rem);
+            timeLeftRef.current = rem;
           }
           if (serverSession) {
             if (serverSession.timeRemaining !== undefined) {
@@ -1723,8 +1747,16 @@ function ExamTake() {
               ex = { id: examId, subjectId: 's1', title: 'AI Proctored Assessment', duration: 600 };
             }
             if (ex && isMounted) {
+              const durSec = (ex.duration || 10) * (ex.duration > 300 ? 1 : 60);
               setExam(ex);
-              setTimeLeft(ex.duration || 600);
+              const startMs = parseInt(sessionStorage.getItem(`dp_start_time_${examId}`) || sessionStorage.getItem('dp_start_time') || Date.now().toString(), 10);
+              sessionStorage.setItem(`dp_start_time_${examId}`, startMs.toString());
+              const endMs = startMs + (durSec * 1000);
+              endTimeRef.current = endMs;
+              sessionStorage.setItem(`dp_end_time_${examId}`, endMs.toString());
+              const rem = Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+              setTimeLeft(rem);
+              timeLeftRef.current = rem;
               let qs = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
               if (!qs || qs.length === 0) qs = DB.questions.get();
               if (!qs || qs.length === 0) qs = SEED.questions;
@@ -2014,26 +2046,45 @@ function ExamTake() {
     };
   }, [triggerViolation, triggerWarning]);
 
-  // Timer — Starts when exam is ready; pauses only if fullscreen is exited; auto-submits on 00:00
+  // Timer — Persistent monotonic countdown based on absolute session start/end time
   useEffect(() => {
-    if (!exam || !isFullscreen) return;
+    if (!isFullscreen) return; // Pause countdown only when exam is frozen
+
+    // Perform immediate calculation to avoid initial render delay
+    if (endTimeRef.current) {
+      const initialRemaining = Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000));
+      setTimeLeft(initialRemaining);
+      timeLeftRef.current = initialRemaining;
+    }
 
     clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current);
-          if (!terminatedRef.current) {
-            doSubmit(false, true);
-          }
-          return 0;
+      if (!endTimeRef.current) {
+        const storedEndTime = parseInt(sessionStorage.getItem(`dp_end_time_${examId}`) || '', 10);
+        if (storedEndTime) {
+          endTimeRef.current = storedEndTime;
+        } else {
+          const storedStartTime = parseInt(sessionStorage.getItem(`dp_start_time_${examId}`) || sessionStorage.getItem('dp_start_time') || Date.now().toString(), 10);
+          const durSec = (examRef.current?.duration || 10) * (examRef.current?.duration > 300 ? 1 : 60);
+          endTimeRef.current = storedStartTime + (durSec * 1000);
+          sessionStorage.setItem(`dp_end_time_${examId}`, endTimeRef.current.toString());
         }
-        return prev - 1;
-      });
+      }
+
+      const remaining = Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      timeLeftRef.current = remaining;
+
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        if (!terminatedRef.current && !isSubmittingRef.current && doSubmitRef.current) {
+          doSubmitRef.current(false, true);
+        }
+      }
     }, 1000);
 
     return () => clearInterval(timerRef.current);
-  }, [exam?.id, isFullscreen, doSubmit]);
+  }, [isFullscreen, examId]);
 
   const resumeFullscreen = async () => {
     document.body.classList.add('mobile-fullscreen-active');

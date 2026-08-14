@@ -3000,27 +3000,33 @@ function AdminDashboard() {
     setEditStudentName(student.name);
   };
 
-  const saveEditStudent = (e) => {
+  const saveEditStudent = async (e) => {
     e.preventDefault();
     if (!editStudentName.trim() || !editStudentId) return;
-    const list = students.map(s => s.id === editStudentId ? { ...s, name: editStudentName.trim() } : s);
-    DB.students.set(list);
-    setStudents(list);
-    setEditStudentId(null);
-    setEditStudentName('');
-    toast.success('Student record updated!');
+    try {
+      await api.put(`/admin/students/${editStudentId}`, { name: editStudentName.trim() });
+      setEditStudentId(null);
+      setEditStudentName('');
+      toast.success('Student record updated!');
+      await reload();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update student');
+    }
   };
 
   const delStudent = (id) => setConfirm({
     title: 'Delete Student Record?',
-    message: 'Remove this student record permanently.',
+    message: 'Remove this student record permanently from the database.',
     danger: true,
-    onConfirm: () => {
-      const list = students.filter(s => s.id !== id);
-      DB.students.set(list);
-      setStudents(list);
-      setConfirm(null);
-      toast.success('Student record deleted');
+    onConfirm: async () => {
+      try {
+        await api.delete(`/admin/students/${id}`);
+        setConfirm(null);
+        toast.success('Student record deleted');
+        await reload();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to delete student');
+      }
     }
   });
 
@@ -3028,76 +3034,85 @@ function AdminDashboard() {
     title: 'Clear All Students?',
     message: 'Permanently remove all registered student records from the database.',
     danger: true,
-    onConfirm: () => {
-      DB.students.set([]);
-      setStudents([]);
-      setConfirm(null);
-      toast.success('Student list cleared');
+    onConfirm: async () => {
+      try {
+        await api.delete('/admin/students');
+        setConfirm(null);
+        toast.success('Student list cleared');
+        await reload();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to clear students');
+      }
     }
   });
 
   const reload = async () => {
-    const subs = DB.subjects.get();
-    setSubjects(subs);
     setQuestions(DB.questions.get());
-    setExams(DB.exams.get());
-    setResults(DB.results.get());
-    setStudents(DB.students.get());
-
-    if (subs.length > 0 && !qSubId) {
-      setQSubId(subs[0].id);
-      setFilterSubId(subs[0].id);
-    }
 
     try {
-      const [examsRes, resultsRes] = await Promise.allSettled([
+      const [subsRes, examsRes, resultsRes, studentsRes] = await Promise.allSettled([
+        api.get('/admin/subjects'),
         api.get('/admin/exams'),
         api.get('/admin/results'),
+        api.get('/admin/students'),
       ]);
+
+      if (subsRes.status === 'fulfilled' && subsRes.value.data?.data) {
+        const remoteSubs = subsRes.value.data.data.map(s => ({
+          id: s._id,
+          name: s.name,
+          color: s.color || '#e63946',
+          description: s.description || '',
+        }));
+        setSubjects(remoteSubs);
+        if (remoteSubs.length > 0 && !qSubId) {
+          setQSubId(remoteSubs[0].id);
+          setFilterSubId(remoteSubs[0].id);
+        }
+      }
 
       if (examsRes.status === 'fulfilled' && examsRes.value.data?.data) {
         const remoteExams = examsRes.value.data.data.map(e => ({
           id: e._id,
-          subjectId: e.subject || 's1',
+          subjectId: e.subject || e.subjectId || 's1',
           title: e.title,
           duration: (e.duration || 10) * 60,
           createdAt: e.createdAt || new Date().toISOString(),
           isPublished: e.isPublished,
         }));
-        if (remoteExams.length > 0) {
-          setExams(prev => {
-            const combined = [...remoteExams];
-            prev.forEach(p => { if (!combined.some(c => c.id === p.id)) combined.push(p); });
-            DB.exams.set(combined);
-            return combined;
-          });
-        }
+        setExams(remoteExams);
       }
 
       if (resultsRes.status === 'fulfilled' && resultsRes.value.data?.data) {
         const remoteResults = resultsRes.value.data.data.map(r => ({
           id: r._id,
           examId: r.examId?._id || r.examId,
-          studentName: r.studentId?.name || 'Student',
+          studentName: r.studentId?.name || r.studentName || 'Student',
           score: r.score,
           totalMarks: r.totalMarks,
           status: r.isPassed ? 'COMPLETED' : 'FAILED',
           cheated: !r.isPassed && r.status === 'voided',
+          warnings: r.warnings || 0,
           date: new Date(r.createdAt || Date.now()).toLocaleString(),
         }));
-        if (remoteResults.length > 0) {
-          setResults(prev => {
-            const combined = [...remoteResults];
-            prev.forEach(p => { if (!combined.some(c => c.id === p.id)) combined.push(p); });
-            DB.results.set(combined);
-            return combined;
-          });
-        }
+        setResults(remoteResults);
+      }
+
+      if (studentsRes.status === 'fulfilled' && studentsRes.value.data?.data) {
+        const remoteStudents = studentsRes.value.data.data.map(st => ({
+          id: st._id,
+          name: st.name,
+          email: st.email,
+          isVerified: st.isVerified,
+          joinedAt: st.createdAt || new Date().toISOString(),
+        }));
+        setStudents(remoteStudents);
       }
     } catch (err) {
-      console.log('Backend sync skipped:', err.message);
+      console.log('Backend sync error:', err.message);
     }
   };
+
   useEffect(() => { reload(); }, []);
 
   // When form subject dropdown changes, dynamically sync filterSubId
@@ -3125,27 +3140,38 @@ function AdminDashboard() {
     navigate('/admin');
   };
 
-  const saveSub = (e) => {
-    e.preventDefault(); if (!subName.trim()) return;
-    let list = [...subjects];
-    if (editSubId) list = list.map(s => s.id === editSubId ? { ...s, name: subName.trim() } : s);
-    else {
-      const newSub = { id: genId('sub'), name: subName.trim(), color: '#e63946' };
-      list.push(newSub);
-      setQSubId(newSub.id);
-      setFilterSubId(newSub.id);
+  const saveSub = async (e) => {
+    e.preventDefault();
+    if (!subName.trim()) return;
+    try {
+      if (editSubId) {
+        await api.put(`/admin/subjects/${editSubId}`, { name: subName.trim() });
+        toast.success('Subject updated');
+      } else {
+        await api.post('/admin/subjects', { name: subName.trim() });
+        toast.success('Subject added');
+      }
+      setSubName('');
+      setEditSubId(null);
+      await reload();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save subject');
     }
-    DB.subjects.set(list); setSubjects(list); setSubName(''); setEditSubId(null);
-    toast.success(editSubId ? 'Subject updated' : 'Subject added');
   };
 
   const delSub = (id) => setConfirm({
-    title: 'Delete Subject?', message: 'This removes the subject and all its questions and exams.', danger: true,
-    onConfirm: () => {
-      DB.subjects.set(subjects.filter(s => s.id !== id));
-      DB.questions.set(questions.filter(q => q.subjectId !== id));
-      DB.exams.set(exams.filter(e => e.subjectId !== id));
-      reload(); setConfirm(null); toast.success('Deleted');
+    title: 'Delete Subject?',
+    message: 'This removes the subject permanently from the database.',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await api.delete(`/admin/subjects/${id}`);
+        setConfirm(null);
+        toast.success('Subject deleted');
+        await reload();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to delete subject');
+      }
     }
   });
 
@@ -3191,34 +3217,20 @@ function AdminDashboard() {
   const createExam = async (subId) => {
     const sub = subjects.find(s => s.id === subId);
     if (!sub) return;
-    const qs = questions.filter(q => q.subjectId === subId);
-    if (qs.length === 0) { toast.error('Add questions to this subject first'); return; }
-    
-    const ex = { id: genId('exam'), subjectId: subId, title: sub.name + ' Assessment', duration: 600, createdAt: new Date().toISOString() };
-    const list = [...exams, ex];
-    DB.exams.set(list);
-    setExams(list);
-
     try {
-      const { data } = await api.post('/admin/exams', {
+      await api.post('/admin/exams', {
         title: sub.name + ' Assessment',
         subject: sub.name,
         duration: 10,
-        totalMarks: qs.reduce((sum, q) => sum + (q.marks || 1), 0) || 10,
-        passingMarks: Math.ceil((qs.reduce((sum, q) => sum + (q.marks || 1), 0) || 10) * 0.4),
+        totalMarks: 10,
+        passingMarks: 4,
         isPublished: true,
       });
-      if (data?.data?._id) {
-        ex.id = data.data._id;
-        const updatedList = list.map(item => item.id === ex.id || item.title === ex.title ? { ...item, id: data.data._id } : item);
-        DB.exams.set(updatedList);
-        setExams(updatedList);
-      }
+      toast.success('Exam link created!');
+      await reload();
     } catch (err) {
-      console.log('Backend exam save skipped:', err.message);
+      toast.error(err.response?.data?.message || 'Failed to create exam link');
     }
-
-    toast.success('Exam link created!');
   };
 
   const copyLink = (id) => {
@@ -3228,7 +3240,16 @@ function AdminDashboard() {
 
   const delExam = (id) => setConfirm({
     title: 'Delete Exam?', message: 'Students won\'t be able to access this exam anymore.', danger: true,
-    onConfirm: () => { const l = exams.filter(e => e.id !== id); DB.exams.set(l); setExams(l); setConfirm(null); toast.success('Exam deleted'); }
+    onConfirm: async () => {
+      try {
+        await api.delete(`/admin/exams/${id}`);
+        setConfirm(null);
+        toast.success('Exam deleted');
+        await reload();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to delete exam');
+      }
+    }
   });
 
   const navItems = [
@@ -3744,8 +3765,17 @@ function AdminDashboard() {
                   {results.length > 0 && (
                     <button
                       onClick={() => setConfirm({
-                        title: 'Clear All Results?', message: 'This permanently deletes all student submissions and audit logs.', danger: true,
-                        onConfirm: () => { DB.results.set([]); setResults([]); setConfirm(null); toast.success('Cleared'); }
+                        title: 'Clear All Results?', message: 'This permanently deletes all student submissions and audit logs from the database.', danger: true,
+                        onConfirm: async () => {
+                          try {
+                            await api.delete('/admin/results');
+                            setConfirm(null);
+                            toast.success('All results cleared');
+                            await reload();
+                          } catch (err) {
+                            toast.error(err.response?.data?.message || 'Failed to clear results');
+                          }
+                        }
                       })}
                       className="btn btn-danger btn-sm"
                     >

@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Result = require('../models/Result');
 const ExamSession = require('../models/ExamSession');
 const CheatingLog = require('../models/CheatingLog');
+const Subject = require('../models/Subject');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
@@ -13,7 +14,7 @@ const PDFDocument = require('pdfkit');
 // @route   GET /api/admin/exams
 const getExams = async (req, res, next) => {
   try {
-    const exams = await Exam.find({ createdBy: req.user._id })
+    const exams = await Exam.find()
       .sort({ createdAt: -1 })
       .populate('createdBy', 'name email');
 
@@ -676,6 +677,170 @@ const downloadQuestionTemplate = async (req, res, next) => {
   }
 };
 
+// ─── Subject Management ───────────────────────────────────────────────────────
+
+// @desc    Get all subjects
+// @route   GET /api/admin/subjects
+const getSubjects = async (req, res, next) => {
+  try {
+    const subjects = await Subject.find().sort({ createdAt: 1 });
+    res.json({ success: true, count: subjects.length, data: subjects });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create subject
+// @route   POST /api/admin/subjects
+const createSubject = async (req, res, next) => {
+  try {
+    const { name, color, description } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Subject name is required' });
+    }
+    const cleanName = name.trim();
+    const existing = await Subject.findOne({
+      name: new RegExp('^' + cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
+    });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'A subject with this name already exists' });
+    }
+    const subject = await Subject.create({
+      name: cleanName,
+      color: color || '#e63946',
+      description: description || '',
+      createdBy: req.user?._id || null,
+    });
+    res.status(201).json({ success: true, data: subject });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update subject
+// @route   PUT /api/admin/subjects/:id
+const updateSubject = async (req, res, next) => {
+  try {
+    const { name, color, description } = req.body;
+    const subject = await Subject.findById(req.params.id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'Subject not found' });
+    }
+    if (name && name.trim()) {
+      const cleanName = name.trim();
+      const existing = await Subject.findOne({
+        _id: { $ne: subject._id },
+        name: new RegExp('^' + cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'),
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'Another subject with this name already exists' });
+      }
+      subject.name = cleanName;
+    }
+    if (color) subject.color = color;
+    if (description !== undefined) subject.description = description;
+    await subject.save();
+    res.json({ success: true, data: subject });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete subject
+// @route   DELETE /api/admin/subjects/:id
+const deleteSubject = async (req, res, next) => {
+  try {
+    const subject = await Subject.findById(req.params.id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'Subject not found' });
+    }
+    await subject.deleteOne();
+    res.json({ success: true, message: 'Subject deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── Student Management ───────────────────────────────────────────────────────
+
+// @desc    Get all students
+// @route   GET /api/admin/students
+const getStudents = async (req, res, next) => {
+  try {
+    const students = await User.find({ role: 'student' })
+      .select('-password -otp -otpExpiry -refreshToken')
+      .sort({ createdAt: -1 });
+    res.json({ success: true, count: students.length, data: students });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update student record
+// @route   PUT /api/admin/students/:id
+const updateStudent = async (req, res, next) => {
+  try {
+    const { name, email, isVerified } = req.body;
+    const student = await User.findOne({ _id: req.params.id, role: 'student' });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student record not found' });
+    }
+    if (name && name.trim()) student.name = name.trim();
+    if (email && email.trim()) student.email = email.trim().toLowerCase();
+    if (isVerified !== undefined) student.isVerified = isVerified;
+    await student.save();
+    res.json({ success: true, data: student });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete student record
+// @route   DELETE /api/admin/students/:id
+const deleteStudent = async (req, res, next) => {
+  try {
+    const student = await User.findOne({ _id: req.params.id, role: 'student' });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student record not found' });
+    }
+    await Result.deleteMany({ studentId: student._id });
+    await ExamSession.deleteMany({ studentId: student._id });
+    await CheatingLog.deleteMany({ studentId: student._id });
+    await student.deleteOne();
+    res.json({ success: true, message: 'Student record and associated session data deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Clear all student records
+// @route   DELETE /api/admin/students
+const clearAllStudents = async (req, res, next) => {
+  try {
+    const studentIds = await User.find({ role: 'student' }).distinct('_id');
+    await Result.deleteMany({ studentId: { $in: studentIds } });
+    await ExamSession.deleteMany({ studentId: { $in: studentIds } });
+    await CheatingLog.deleteMany({ studentId: { $in: studentIds } });
+    await User.deleteMany({ role: 'student' });
+    res.json({ success: true, message: 'All student records cleared successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Clear all exam results
+// @route   DELETE /api/admin/results
+const clearAllResults = async (req, res, next) => {
+  try {
+    await Result.deleteMany({});
+    await CheatingLog.deleteMany({});
+    await ExamSession.deleteMany({});
+    res.json({ success: true, message: 'All results and proctor audit logs cleared' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getExams,
   createExam,
@@ -696,4 +861,13 @@ module.exports = {
   downloadExcelReport,
   downloadPDFReport,
   downloadQuestionTemplate,
+  getSubjects,
+  createSubject,
+  updateSubject,
+  deleteSubject,
+  getStudents,
+  updateStudent,
+  deleteStudent,
+  clearAllStudents,
+  clearAllResults,
 };

@@ -23,6 +23,15 @@ const {
   downloadExcelReport,
   downloadPDFReport,
   downloadQuestionTemplate,
+  getSubjects,
+  createSubject,
+  updateSubject,
+  deleteSubject,
+  getStudents,
+  updateStudent,
+  deleteStudent,
+  clearAllStudents,
+  clearAllResults,
 } = require('../controllers/adminController');
 
 // Configure multer for Excel uploads
@@ -46,8 +55,24 @@ const upload = multer({
 // All admin routes require authentication + admin role
 router.use(protect, requireAdmin);
 
+// Enforce no-cache headers on all dynamic admin API endpoints
+router.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
 // Dashboard
 router.get('/stats', getDashboardStats);
+
+// Subject management
+router.route('/subjects').get(getSubjects).post(createSubject);
+router.route('/subjects/:id').put(updateSubject).delete(deleteSubject);
+
+// Student management
+router.route('/students').get(getStudents).delete(clearAllStudents);
+router.route('/students/:id').put(updateStudent).delete(deleteStudent);
 
 // Exam management
 router.route('/exams').get(getExams).post(createExam);
@@ -62,7 +87,7 @@ router.route('/questions/:id').put(updateQuestion).delete(deleteQuestion);
 
 // Monitoring & results
 router.get('/sessions/active', getActiveSessions);
-router.get('/results', getAllResults);
+router.route('/results').get(getAllResults).delete(clearAllResults);
 router.get('/results/:id', getResultById);
 router.get('/cheat-logs', getCheatLogs);
 
@@ -72,3 +97,4 @@ router.get('/reports/pdf/:resultId', downloadPDFReport);
 router.get('/reports/question-template', downloadQuestionTemplate);
 
 module.exports = router;
+

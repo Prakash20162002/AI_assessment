@@ -11,10 +11,12 @@ const {
   getMyResults,
   getResultDetail,
 } = require('../controllers/studentController');
+const { getSubjects } = require('../controllers/adminController');
 
 // All student routes require authentication, student role, and verified email
 router.use(protect, requireStudent, requireVerified);
 
+router.get('/subjects', getSubjects);
 router.get('/exams', getAvailableExams);
 router.get('/exams/:id', getExamById);
 router.post('/exams/:id/start', startExam);

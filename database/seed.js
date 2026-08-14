@@ -2,6 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../server/.env') });
 const mongoose = require('mongoose');
 const User = require('../server/models/User');
+const Subject = require('../server/models/Subject');
 
 const seedAdmins = async () => {
   try {
@@ -68,11 +69,29 @@ const seedAdmins = async () => {
       }
     }
 
-    console.log('🎉 Admin initialization completed successfully.');
+    // Default subjects to initialize in MongoDB
+    const defaultSubjects = [
+      { name: 'Web Development', color: '#e63946', description: 'Full-stack and frontend development assessments' },
+      { name: 'Data Structures', color: '#f77f00', description: 'Algorithms and core computer science fundamentals' },
+      { name: 'Cloud DevOps', color: '#06d6a0', description: 'Cloud infrastructure and CI/CD pipelines' },
+      { name: 'Data Science', color: '#118ab2', description: 'Machine learning, statistics, and data analysis' },
+    ];
+
+    for (const sub of defaultSubjects) {
+      const existingSub = await Subject.findOne({ name: sub.name });
+      if (!existingSub) {
+        await Subject.create(sub);
+        console.log(`✅ Seeded subject in MongoDB: ${sub.name}`);
+      } else {
+        console.log(`ℹ️  Subject already exists in MongoDB: ${sub.name}`);
+      }
+    }
+
+    console.log('🎉 Database seeding completed successfully.');
     await mongoose.connection.close();
     process.exit(0);
   } catch (error) {
-    console.error('❌ Error seeding admin accounts:', error.message);
+    console.error('❌ Error seeding database:', error.message);
     process.exit(1);
   }
 };

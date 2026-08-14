@@ -30,10 +30,13 @@ const StudentDashboard = () => {
 
   const handleActionClick = (exam) => {
     if (exam.sessionStatus === 'submitted' || exam.sessionStatus === 'timeout' || exam.sessionStatus === 'voided') {
-      navigate('/student/results');
+      if (exam.resultId) {
+        navigate(`/result/${exam.resultId}`);
+      } else {
+        navigate(`/exam/${exam._id}`);
+      }
     } else {
-      // Navigate to pre-exam check
-      navigate(`/student/exams/${exam._id}/setup`);
+      navigate(`/exam/${exam._id}/setup`);
     }
   };
 

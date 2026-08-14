@@ -46,10 +46,17 @@ const LoginPage = () => {
       login(data.user, data.accessToken);
       toast.success(`Welcome back, ${data.user.name}!`);
 
-      if (redirectParam && redirectParam.startsWith('/')) {
+      if (data.user?.role !== 'admin') {
+        localStorage.removeItem('dp_admin');
+        localStorage.removeItem('dp_admin_name');
+        sessionStorage.removeItem('dp_admin');
+        sessionStorage.removeItem('dp_admin_name');
+      }
+
+      if (redirectParam && redirectParam.startsWith('/') && !(data.user?.role !== 'admin' && redirectParam.startsWith('/admin'))) {
         navigate(redirectParam, { replace: true });
       } else {
-        navigate(data.user.role === 'admin' ? '/admin/dashboard' : '/student/dashboard', { replace: true });
+        navigate(data.user?.role === 'admin' ? '/admin/dashboard' : '/student/dashboard', { replace: true });
       }
     } catch (err) {
       const msg = err.response?.data?.message || 'Login failed';

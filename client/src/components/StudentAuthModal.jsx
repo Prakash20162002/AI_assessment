@@ -78,6 +78,10 @@ export default function StudentAuthModal({
       }
 
       if (data.user) {
+        localStorage.removeItem('dp_admin');
+        localStorage.removeItem('dp_admin_name');
+        sessionStorage.removeItem('dp_admin');
+        sessionStorage.removeItem('dp_admin_name');
         sessionStorage.setItem(
           'dp_student',
           data.user.name
@@ -244,6 +248,10 @@ export default function StudentAuthModal({
       }
 
       if (data.user) {
+        localStorage.removeItem('dp_admin');
+        localStorage.removeItem('dp_admin_name');
+        sessionStorage.removeItem('dp_admin');
+        sessionStorage.removeItem('dp_admin_name');
         sessionStorage.setItem(
           'dp_student',
           data.user.name

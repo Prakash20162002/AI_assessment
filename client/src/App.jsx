@@ -301,8 +301,9 @@ function ChapterModal({ open, isEdit, subjectName, initialData, onSave, onCancel
 }
 
 function Header({ showAdmin = false, adminMode = false, disableBrandLink = false, onLogout }) {
-  const adminName = sessionStorage.getItem('dp_admin_name');
-  const isAdminLoggedIn = sessionStorage.getItem('dp_admin') === 'true';
+  const { user } = useAuth();
+  const isAdminLoggedIn = user?.role === 'admin';
+  const adminName = user?.role === 'admin' ? (user.name || sessionStorage.getItem('dp_admin_name') || 'Admin') : null;
 
   const brandInner = (
     <div className="brand" style={{ cursor: disableBrandLink ? 'default' : 'pointer' }}>
@@ -313,13 +314,15 @@ function Header({ showAdmin = false, adminMode = false, disableBrandLink = false
     </div>
   );
 
+  const brandDestination = isAdminLoggedIn ? "/admin/dashboard" : (user?.role === 'student' ? "/student/dashboard" : "/");
+
   return (
     <header className="app-header">
       <div className="header-inner">
         {disableBrandLink ? (
           brandInner
         ) : (
-          <Link to={isAdminLoggedIn ? "/admin/dashboard" : "/"} style={{ textDecoration: 'none' }}>
+          <Link to={brandDestination} style={{ textDecoration: 'none' }}>
             {brandInner}
           </Link>
         )}
@@ -1357,6 +1360,8 @@ function ExamTake() {
   const [warnings, setWarnings] = useState(0);
   const [warningBanner, setWarningBanner] = useState(null);
   const [faceApiReady, setFaceApiReady] = useState(false);
+  const [camActive, setCamActive] = useState(false);
+  const [camError, setCamError] = useState('');
   // On mobile: always treat as fullscreen (native API not supported on iOS)
   const [isFullscreen, setIsFullscreen] = useState(
     isMobile || !!(document.fullscreenElement || document.webkitFullscreenElement)
@@ -1371,6 +1376,18 @@ function ExamTake() {
   const timerRef = useRef(null);
   const mountTimeRef = useRef(Date.now());
 
+  const answersRef = useRef(answers);
+  const timeLeftRef = useRef(timeLeft);
+  const questionsRef = useRef(questions);
+  const examRef = useRef(exam);
+  const studentNameRef = useRef(studentName);
+
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { timeLeftRef.current = timeLeft; }, [timeLeft]);
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+  useEffect(() => { examRef.current = exam; }, [exam]);
+  useEffect(() => { studentNameRef.current = studentName; }, [studentName]);
+
   const noFaceFramesRef = useRef(0);
   const multiFaceFramesRef = useRef(0);
   const gazeFramesRef = useRef(0);
@@ -1381,13 +1398,17 @@ function ExamTake() {
     document.body.classList.remove('mobile-fullscreen-active');
     if (streamRef.current) {
       try {
-        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current.getTracks().forEach(t => {
+          t.stop();
+          t.enabled = false;
+        });
       } catch { }
       streamRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    setCamActive(false);
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       try {
         const efs = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen;
@@ -1402,9 +1423,14 @@ function ExamTake() {
     let wrong = 0;
     let skipped = 0;
     const answerBreakdown = [];
+    const currentQuestions = questionsRef.current;
+    const currentAnswers = answersRef.current;
+    const currentExam = examRef.current;
+    const currentStudent = studentNameRef.current || 'Student';
+    const currentTimeLeft = timeLeftRef.current;
 
-    questions.forEach((q, idx) => {
-      const selected = answers[q.id] || null;
+    currentQuestions.forEach((q, idx) => {
+      const selected = currentAnswers[q.id] || null;
       const isCor = selected === q.correctAnswer;
       const qMarks = q.marks || 1;
 
@@ -1430,14 +1456,14 @@ function ExamTake() {
       });
     });
 
-    const totalMarks = questions.reduce((s, q) => s + (q.marks || 0), 0) || 100;
+    const totalMarks = currentQuestions.reduce((s, q) => s + (q.marks || 0), 0) || 100;
     const percentage = totalMarks > 0 ? parseFloat(((score / totalMarks) * 100).toFixed(1)) : 0;
-    const isPassed = score >= (exam?.passingMarks || Math.round(totalMarks * 0.4));
+    const isPassed = score >= (currentExam?.passingMarks || Math.round(totalMarks * 0.4));
 
     const r = {
       id: genId('res'),
       examId,
-      studentName: studentName || 'Student',
+      studentName: currentStudent,
       score,
       totalMarks,
       percentage,
@@ -1445,41 +1471,45 @@ function ExamTake() {
       correct,
       wrong,
       skipped,
-      totalQuestions: questions.length,
+      totalQuestions: currentQuestions.length,
       cheated,
       warnings: warningCountRef.current,
       status: cheated ? 'Disqualified' : 'Completed',
       date: new Date().toLocaleString(),
-      answers,
-      questions,
+      answers: currentAnswers,
+      questions: currentQuestions,
       answerBreakdown,
-      timeTaken: (exam?.duration || 600) - timeLeft
+      timeTaken: Math.max(0, (currentExam?.duration || 600) - currentTimeLeft)
     };
 
     DB.results.set([r, ...DB.results.get()]);
     return r;
-  }, [answers, questions, examId, studentName, timeLeft, exam]);
+  }, [examId]);
 
   const doSubmit = useCallback(async (cheated = false, timeUp = false) => {
-    if (!questions.length) return;
+    if (!questionsRef.current.length) return;
     clearInterval(timerRef.current);
     stopCameraAndExamProctoring();
     stopGlobalWebcamStreams();
 
     const localResult = saveResult(cheated);
     let finalResultId = localResult.id;
+    const currentStudent = studentNameRef.current;
+    const currentAnswers = answersRef.current;
+    const currentTimeLeft = timeLeftRef.current;
+    const currentExam = examRef.current;
 
-    if (studentName && examId) {
-      sessionStorage.setItem(`dp_submitted_${examId}_${studentName}`, 'true');
+    if (currentStudent && examId) {
+      sessionStorage.setItem(`dp_submitted_${examId}_${currentStudent}`, 'true');
     }
 
     try {
       const { data } = await api.post(`/student/exams/${examId}/submit`, {
-        answers,
+        answers: currentAnswers,
         cheated,
         timeUp,
         warnings: warningCountRef.current,
-        timeTaken: (exam?.duration || 600) - timeLeft,
+        timeTaken: Math.max(0, (currentExam?.duration || 600) - currentTimeLeft),
       });
       if (data?.data?.resultId || data?.data?.id || data?.data?._id) {
         finalResultId = data.data.resultId || data.data.id || data.data._id;
@@ -1495,7 +1525,7 @@ function ExamTake() {
     } else {
       navigate('/cheated', { replace: true });
     }
-  }, [saveResult, navigate, questions, stopCameraAndExamProctoring, studentName, examId, answers, timeLeft, exam]);
+  }, [saveResult, navigate, stopCameraAndExamProctoring, examId]);
 
   const triggerViolation = useCallback((reason) => {
     if (terminatedRef.current) return;
@@ -1529,6 +1559,44 @@ function ExamTake() {
       toast.error(`🚨 PROCTORING ALERT (${newCount}/${MAX_WARNINGS}): ${reason}`, { duration: 4000, id: 'proctor-alert' });
     }
   }, [triggerViolation, examId]);
+
+  const initWebcam = useCallback(async () => {
+    setCamError('');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCamError('Camera API not supported in this browser.');
+      toast.error('Webcam not supported in this browser.');
+      return;
+    }
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { width: 320, height: 240, facingMode: 'user' },
+        audio: false
+      });
+      streamRef.current = s;
+      registerStream(s);
+      setCamActive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[PROCTOR_CAMERA_ERROR]', err);
+      const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+      const msg = isDenied
+        ? 'Camera permission denied. Please allow camera access for AI proctoring.'
+        : 'Unable to access webcam. Please check camera settings.';
+      setCamError(msg);
+      toast.error(msg, { id: 'cam-proctor-error', duration: 5000 });
+    }
+  }, []);
+
+  // Ensure live video element gets attached whenever video DOM node mounts or stream updates
+  useEffect(() => {
+    if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [questions.length, camActive]);
 
   // Load exam data & start webcam (with Submission Guard)
   useEffect(() => {
@@ -1565,6 +1633,8 @@ function ExamTake() {
           if (serverSession) {
             if (serverSession.timeRemaining !== undefined) {
               setTimeLeft(serverSession.timeRemaining);
+            } else if (serverExam?.duration) {
+              setTimeLeft((serverExam.duration || 10) * 60);
             }
             if (serverSession.warningCount !== undefined) {
               warningCountRef.current = serverSession.warningCount;
@@ -1637,15 +1707,7 @@ function ExamTake() {
       });
 
     stopGlobalWebcamStreams();
-
-    navigator.mediaDevices?.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } })
-      .then(s => {
-        if (!isMounted) return;
-        streamRef.current = s;
-        registerStream(s);
-        if (videoRef.current) videoRef.current.srcObject = s;
-      })
-      .catch(() => { });
+    initWebcam();
 
     const enterFS = async () => {
       document.body.classList.add('mobile-fullscreen-active');
@@ -1660,6 +1722,8 @@ function ExamTake() {
           if (rfs) await rfs.call(el);
           setIsFullscreen(true);
         } catch { setIsFullscreen(true); }
+      } else {
+        setIsFullscreen(true);
       }
     };
     setTimeout(enterFS, 200);
@@ -1670,16 +1734,17 @@ function ExamTake() {
       stopGlobalWebcamStreams();
       if (videoRef.current) videoRef.current.srcObject = null;
     };
-  }, [examId, navigate, studentName, user]);
+  }, [examId, navigate, studentName, user, initWebcam]);
 
   // Initial Fullscreen Check
   useEffect(() => {
-    if (isMobile) return;
-    const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
-    if (!inFS) {
-      setIsFullscreen(false);
+    if (isMobile) {
+      setIsFullscreen(true);
+      return;
     }
-  }, []);
+    const inFS = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement);
+    setIsFullscreen(inFS);
+  }, [isMobile]);
 
   // Load face-api.js models
   useEffect(() => {
@@ -1846,21 +1911,26 @@ function ExamTake() {
     };
   }, [triggerViolation, triggerWarning]);
 
-  // Timer — PAUSES automatically when !isFullscreen (Exam Frozen)
+  // Timer — Starts when exam is ready; pauses only if fullscreen is exited; auto-submits on 00:00
   useEffect(() => {
     if (!exam || !isFullscreen) return;
+
+    clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
-      setTimeLeft(p => {
-        if (p <= 1) {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
           clearInterval(timerRef.current);
-          if (!terminatedRef.current) doSubmit(false, true);
+          if (!terminatedRef.current) {
+            doSubmit(false, true);
+          }
           return 0;
         }
-        return p - 1;
+        return prev - 1;
       });
     }, 1000);
+
     return () => clearInterval(timerRef.current);
-  }, [exam, isFullscreen, doSubmit]);
+  }, [exam?.id, isFullscreen, doSubmit]);
 
   const resumeFullscreen = async () => {
     document.body.classList.add('mobile-fullscreen-active');
@@ -1954,9 +2024,23 @@ function ExamTake() {
         </div>
 
         <div className="exam-header-right">
-          <div className="cam-thumb">
-            <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <div className="cam-thumb" style={{ position: 'relative', overflow: 'hidden' }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              onLoadedMetadata={(e) => { e.target.play().catch(() => {}); }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
+            {camError && (
+              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 4, textAlign: 'center' }}>
+                <Camera size={16} style={{ color: 'var(--danger)', marginBottom: 2 }} />
+                <span style={{ fontSize: 8, color: 'var(--danger)', lineHeight: 1.1 }}>Cam Blocked</span>
+                <button onClick={initWebcam} className="btn btn-secondary btn-sm" style={{ fontSize: 8, padding: '2px 6px', marginTop: 3 }}>Retry</button>
+              </div>
+            )}
           </div>
 
           <div className={`exam-timer ${urgentTime ? 'exam-timer-urgent' : ''}`}>
@@ -2207,13 +2291,13 @@ function ThankYouPage() {
           <Link to={`/result/${result.id}`} className="btn btn-secondary">
             <FileText size={15} /> Full Report
           </Link>
-          {sessionStorage.getItem('dp_admin') === 'true' ? (
+          {user?.role === 'admin' ? (
             <Link to="/admin/dashboard" className="btn btn-primary">
               <ArrowLeft size={15} /> Admin Dashboard
             </Link>
           ) : (
-            <Link to="/" className="btn btn-primary">
-              <Home size={15} /> Go Home
+            <Link to="/student/dashboard" className="btn btn-primary">
+              <Home size={15} /> Student Dashboard
             </Link>
           )}
         </div>
@@ -2230,8 +2314,8 @@ function ResultPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isAdmin = sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
-  const isAdminRoute = location.pathname.startsWith('/admin/results') || isAdmin;
+  const isAdmin = user?.role === 'admin';
+  const isAdminRoute = location.pathname.startsWith('/admin/results') && isAdmin;
 
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2249,7 +2333,7 @@ function ResultPage() {
       // 1. Try Backend API first
       try {
         let endpoint = `/student/results/${id}`;
-        if (isAdmin) {
+        if (isAdminRoute || isAdmin) {
           endpoint = `/admin/results/${id}`;
         }
         
@@ -3039,18 +3123,17 @@ function CheatedPage() {
 ═══════════════════════════════════════════════════════ */
 function AdminLogin() {
   const navigate = useNavigate();
-  const { login: authLogin } = useAuth();
+  const { user, login: authLogin } = useAuth();
   const [loginId, setLoginId] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const hasAdminSession = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!localStorage.getItem('accessToken');
-    if (hasAdminSession) {
-      navigate('/admin/dashboard');
+    if (user?.role === 'admin') {
+      navigate('/admin/dashboard', { replace: true });
     }
-  }, [navigate]);
+  }, [user, navigate]);
 
   const login = async (e) => {
     e.preventDefault();
@@ -3143,16 +3226,21 @@ function AdminLogin() {
    9. ADMIN DASHBOARD
 ═══════════════════════════════════════════════════════ */
 function AdminGuard({ children }) {
-  const navigate = useNavigate();
+  const { user, loading } = useAuth();
   const token = localStorage.getItem('accessToken');
-  const isAdmin = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!token;
 
-  useEffect(() => {
-    const hasAdmin = (sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true') && !!localStorage.getItem('accessToken');
-    if (!hasAdmin) navigate('/admin');
-  }, [navigate]);
+  if (loading) {
+    return (
+      <div className="center-page" style={{ minHeight: '100vh', background: 'var(--bg-dark)' }}>
+        <div className="spinner" style={{ width: 40, height: 40, borderWidth: 3, margin: '0 auto 16px', borderColor: 'var(--primary-light)', borderTopColor: 'transparent' }} />
+      </div>
+    );
+  }
 
-  if (!isAdmin) return null;
+  if (!token || !user || user.role !== 'admin') {
+    return <Navigate to="/admin" replace />;
+  }
+
   return children;
 }
 
@@ -4639,6 +4727,9 @@ export default function App() {
               <Route path="/exam/:examId" element={<StudentLanding />} />
               <Route path="/exam/:examId/setup" element={<StudentGuard><SystemCheck /></StudentGuard>} />
               <Route path="/exam/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
+              <Route path="/student/exams/:examId/setup" element={<StudentGuard><SystemCheck /></StudentGuard>} />
+              <Route path="/student/exams/:examId/take" element={<StudentGuard><ExamTake /></StudentGuard>} />
+              <Route path="/student/results" element={<StudentGuard><StudentDashboard /></StudentGuard>} />
               <Route path="/thankyou/:resultId" element={<ThankYouPage />} />
               <Route path="/result/:id" element={<ResultPage />} />
               <Route path="/admin/results/:id" element={<AdminGuard><ResultPage /></AdminGuard>} />

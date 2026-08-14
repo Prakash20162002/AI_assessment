@@ -23,6 +23,16 @@ const getAvailableExams = async (req, res, next) => {
       sessionMap[s.examId.toString()] = { status: s.status, warningCount: s.warningCount };
     });
 
+    const results = await Result.find({
+      studentId: req.user._id,
+      examId: { $in: examIds },
+    }).select('examId _id');
+
+    const resultMap = {};
+    results.forEach((r) => {
+      resultMap[r.examId.toString()] = r._id;
+    });
+
     const examsWithStatus = await Promise.all(exams.map(async (exam) => {
       const sess = sessionMap[exam._id.toString()] || { status: 'not-started', warningCount: 0 };
       const questionFilter = exam.subjectId ? { $or: [{ examId: exam._id }, { subjectId: exam.subjectId }] } : { examId: exam._id };
@@ -33,6 +43,7 @@ const getAvailableExams = async (req, res, next) => {
         questionCount: qCount || exam.questionCount || 0,
         sessionStatus: sess.status,
         warningCount: sess.warningCount,
+        resultId: resultMap[exam._id.toString()] || null,
       };
     }));
 

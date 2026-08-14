@@ -10,7 +10,7 @@ const ResultPage = () => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const isAdmin = user?.role === 'admin' || sessionStorage.getItem('dp_admin') === 'true' || localStorage.getItem('dp_admin') === 'true';
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     const fetchResult = async () => {

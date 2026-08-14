@@ -21,6 +21,12 @@ export const AuthProvider = ({ children }) => {
 
   const login = (userData, token) => {
     localStorage.setItem('accessToken', token);
+    if (userData?.role !== 'admin') {
+      localStorage.removeItem('dp_admin');
+      localStorage.removeItem('dp_admin_name');
+      sessionStorage.removeItem('dp_admin');
+      sessionStorage.removeItem('dp_admin_name');
+    }
     setUser(userData);
   };
 
@@ -29,6 +35,12 @@ export const AuthProvider = ({ children }) => {
       await api.post('/auth/logout');
     } catch (_) {}
     localStorage.removeItem('accessToken');
+    localStorage.removeItem('dp_admin');
+    localStorage.removeItem('dp_admin_name');
+    sessionStorage.removeItem('dp_admin');
+    sessionStorage.removeItem('dp_admin_name');
+    sessionStorage.removeItem('dp_student');
+    sessionStorage.removeItem('dp_student_email');
     setUser(null);
   };
 

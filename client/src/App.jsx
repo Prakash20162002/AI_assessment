@@ -28,19 +28,9 @@ import api from './services/api';
 const MAX_WARNINGS = 3;
 
 const SEED = {
-  subjects: [
-    { id: 's1', name: 'Web Development', color: '#e63946' },
-    { id: 's2', name: 'Data Structures', color: '#f77f00' },
-  ],
-  questions: [
-    { id: 'q1', subjectId: 's1', questionText: 'Which CSS property creates a glassmorphism blur effect?', options: { A: 'filter: blur()', B: 'backdrop-filter: blur()', C: 'background-blur', D: 'opacity-blur' }, correctAnswer: 'B', marks: 5, explanation: 'backdrop-filter applies graphical effects behind an element.' },
-    { id: 'q2', subjectId: 's1', questionText: 'What does useState return in React?', options: { A: 'A string value', B: 'A DOM node', C: 'A value and setter function', D: 'A Promise' }, correctAnswer: 'C', marks: 5, explanation: 'useState returns [currentValue, setValue].' },
-    { id: 'q3', subjectId: 's2', questionText: 'What is the time complexity of binary search?', options: { A: 'O(n)', B: 'O(log n)', C: 'O(n²)', D: 'O(1)' }, correctAnswer: 'B', marks: 5, explanation: 'Binary search halves the search space each iteration.' },
-    { id: 'q4', subjectId: 's2', questionText: 'Which data structure uses FIFO ordering?', options: { A: 'Stack', B: 'Queue', C: 'Tree', D: 'Hash Map' }, correctAnswer: 'B', marks: 5, explanation: 'Queue = First In, First Out.' },
-  ],
-  exams: [
-    { id: 'exam_demo', subjectId: 's1', title: 'Web Dev Assessment', duration: 600, createdAt: new Date().toISOString() },
-  ],
+  subjects: [],
+  questions: [],
+  exams: [],
   results: [],
   students: [],
 };
@@ -2056,91 +2046,12 @@ function ResultPage() {
           return;
         }
       } catch (err) {
-        console.warn('API result fetch error, falling back to local DB:', err.message);
+        console.warn('API result fetch error:', err.message);
       }
 
-      // 2. Fallback to Local Storage DB
-      try {
-        const localResults = DB.results.get();
-        const found = localResults.find(r => r.id === id);
-
-        if (found && isMounted) {
-          let breakdown = found.answerBreakdown || [];
-
-          // If answerBreakdown was not pre-calculated, build it from questions & answers
-          if (!breakdown.length) {
-            let questionsList = found.questions || [];
-            if (!questionsList.length) {
-              const ex = DB.exams.get().find(e => e.id === found.examId);
-              if (ex) {
-                questionsList = DB.questions.get().filter(q => q.subjectId === ex.subjectId);
-              }
-              if (!questionsList.length) {
-                questionsList = DB.questions.get();
-              }
-            }
-
-            breakdown = questionsList.map((q, i) => {
-              const stuAns = found.answers?.[q.id] || null;
-              const isCor = stuAns === q.correctAnswer;
-              const qMarks = q.marks || 1;
-              return {
-                questionId: q.id || `q_${i + 1}`,
-                questionText: q.questionText,
-                options: q.options || {},
-                selectedOption: stuAns,
-                correctAnswer: q.correctAnswer,
-                isCorrect: isCor,
-                marks: isCor ? qMarks : 0,
-                maxMarks: qMarks,
-                explanation: q.explanation || '',
-              };
-            });
-          }
-
-          const exObj = DB.exams.get().find(e => e.id === found.examId);
-          const subObj = exObj ? DB.subjects.get().find(s => s.id === exObj.subjectId) : null;
-
-          setResult({
-            id: found.id,
-            examId: found.examId || '',
-            examTitle: found.examTitle || 'AI Proctored Assessment',
-            subjectName: subObj?.name || 'General Assessment',
-            subjectColor: subObj?.color || '#e63946',
-            studentName: found.studentName || user?.name || 'Student',
-            studentEmail: found.studentEmail || user?.email || (sessionStorage.getItem('dp_user') ? JSON.parse(sessionStorage.getItem('dp_user')).email : 'student@devphoenix.com'),
-            score: found.score ?? 0,
-            totalMarks: found.totalMarks || 100,
-            passingMarks: found.passingMarks || 40,
-            percentage: found.percentage ?? (found.totalMarks > 0 ? Math.round((found.score / found.totalMarks) * 100) : 0),
-            isPassed: found.isPassed ?? (found.score >= 40),
-            correct: found.correct ?? breakdown.filter(b => b.isCorrect).length,
-            wrong: found.wrong ?? breakdown.filter(b => b.selectedOption && !b.isCorrect).length,
-            skipped: found.skipped ?? breakdown.filter(b => !b.selectedOption).length,
-            totalQuestions: found.totalQuestions || breakdown.length,
-            timeTaken: found.timeTaken || 0,
-            date: found.date || new Date().toLocaleString(),
-            answerBreakdown: breakdown,
-            warningCount: found.warnings || 0,
-            cheated: !!found.cheated,
-            status: found.status || (found.cheated ? 'Disqualified' : (found.isPassed ? 'Passed' : 'Failed')),
-            proctorLogs: found.proctorLogs || (found.warnings > 0 ? [
-              { timestamp: found.date, type: 'Tab Switch / Face Detection Warning', description: `${found.warnings} warning(s) triggered during examination.` }
-            ] : []),
-          });
-          setLoading(false);
-          return;
-        }
-
-        if (!found && isMounted) {
-          setError('Result not found.');
-          setLoading(false);
-        }
-      } catch (dbErr) {
-        if (isMounted) {
-          setError('Unable to load assessment result.');
-          setLoading(false);
-        }
+      if (isMounted) {
+        setError('Assessment result record not found in the database.');
+        setLoading(false);
       }
     };
 
@@ -3047,11 +2958,10 @@ function AdminDashboard() {
   });
 
   const reload = async () => {
-    setQuestions(DB.questions.get());
-
     try {
-      const [subsRes, examsRes, resultsRes, studentsRes] = await Promise.allSettled([
+      const [subsRes, qsRes, examsRes, resultsRes, studentsRes] = await Promise.allSettled([
         api.get('/admin/subjects'),
+        api.get('/admin/questions'),
         api.get('/admin/exams'),
         api.get('/admin/results'),
         api.get('/admin/students'),
@@ -3071,10 +2981,24 @@ function AdminDashboard() {
         }
       }
 
+      if (qsRes.status === 'fulfilled' && qsRes.value.data?.data) {
+        const remoteQuestions = qsRes.value.data.data.map(q => ({
+          id: q._id || q.id,
+          subjectId: q.subjectId?._id ? q.subjectId._id.toString() : (q.subjectId ? q.subjectId.toString() : ''),
+          questionText: q.questionText,
+          options: q.options || { A: '', B: '', C: '', D: '' },
+          correctAnswer: q.correctAnswer || 'A',
+          marks: Number(q.marks) > 0 ? Number(q.marks) : 1,
+          explanation: q.explanation || '',
+          examId: q.examId?._id || q.examId || null,
+        }));
+        setQuestions(remoteQuestions);
+      }
+
       if (examsRes.status === 'fulfilled' && examsRes.value.data?.data) {
         const remoteExams = examsRes.value.data.data.map(e => ({
           id: e._id,
-          subjectId: e.subject || e.subjectId || 's1',
+          subjectId: e.subjectId?._id ? e.subjectId._id.toString() : (e.subjectId ? e.subjectId.toString() : (e.subject || 's1')),
           title: e.title,
           duration: (e.duration || 10) * 60,
           createdAt: e.createdAt || new Date().toISOString(),
@@ -3161,7 +3085,7 @@ function AdminDashboard() {
 
   const delSub = (id) => setConfirm({
     title: 'Delete Subject?',
-    message: 'This removes the subject permanently from the database.',
+    message: 'This removes the subject and all its associated questions permanently from the database.',
     danger: true,
     onConfirm: async () => {
       try {
@@ -3185,16 +3109,38 @@ function AdminDashboard() {
     setQExpl('');
   };
 
-  const saveQ = (e) => {
+  const saveQ = async (e) => {
     e.preventDefault();
     if (!qSubId) { toast.error('Please select a subject'); return; }
     if (!qText || !qOpts.A || !qOpts.B || !qOpts.C || !qOpts.D) { toast.error('Fill all required fields'); return; }
-    let list = [...questions];
-    const data = { subjectId: qSubId, questionText: qText, options: { ...qOpts }, correctAnswer: qAns, marks: Number(qMarks), explanation: qExpl };
-    if (editQId) list = list.map(q => q.id === editQId ? { ...q, ...data } : q);
-    else list.push({ id: genId('q'), ...data });
-    DB.questions.set(list); setQuestions(list); resetQForm();
-    toast.success(editQId ? 'Question updated' : 'Question added to subject!');
+
+    const data = {
+      subjectId: qSubId,
+      questionText: qText.trim(),
+      options: {
+        A: qOpts.A.trim(),
+        B: qOpts.B.trim(),
+        C: qOpts.C.trim(),
+        D: qOpts.D.trim(),
+      },
+      correctAnswer: qAns,
+      marks: Number(qMarks) > 0 ? Number(qMarks) : 1,
+      explanation: qExpl.trim(),
+    };
+
+    try {
+      if (editQId) {
+        await api.put(`/admin/questions/${editQId}`, data);
+        toast.success('Question updated in database!');
+      } else {
+        await api.post('/admin/questions', data);
+        toast.success('Question added to subject in database!');
+      }
+      resetQForm();
+      await reload();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save question');
+    }
   };
 
   const editQ = (q) => {
@@ -3210,20 +3156,40 @@ function AdminDashboard() {
   };
 
   const delQ = (id) => setConfirm({
-    title: 'Delete Question?', message: 'Remove this question permanently.', danger: true,
-    onConfirm: () => { const l = questions.filter(q => q.id !== id); DB.questions.set(l); setQuestions(l); setConfirm(null); toast.success('Deleted'); }
+    title: 'Delete Question?',
+    message: 'Remove this question permanently from the database.',
+    danger: true,
+    onConfirm: async () => {
+      try {
+        await api.delete(`/admin/questions/${id}`);
+        setConfirm(null);
+        toast.success('Question deleted from database');
+        await reload();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Failed to delete question');
+      }
+    }
   });
 
   const createExam = async (subId) => {
     const sub = subjects.find(s => s.id === subId);
     if (!sub) return;
+    const qs = questions.filter(q => q.subjectId === subId);
+    if (qs.length === 0) {
+      toast.error('Add questions to this subject first in Question Bank');
+      return;
+    }
+    const calculatedTotalMarks = qs.reduce((sum, q) => sum + (Number(q.marks) > 0 ? Number(q.marks) : 1), 0);
+    const calculatedPassingMarks = Math.ceil(calculatedTotalMarks * 0.4);
+
     try {
       await api.post('/admin/exams', {
         title: sub.name + ' Assessment',
         subject: sub.name,
+        subjectId: sub.id,
         duration: 10,
-        totalMarks: 10,
-        passingMarks: 4,
+        totalMarks: calculatedTotalMarks,
+        passingMarks: calculatedPassingMarks,
         isPublished: true,
       });
       toast.success('Exam link created!');

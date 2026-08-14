@@ -80,10 +80,11 @@ router.route('/exams/:id').get(getExam).put(updateExam).delete(deleteExam);
 router.patch('/exams/:id/publish', togglePublish);
 
 // Question management
+router.route('/questions').get(getQuestions).post(addQuestion);
+router.route('/questions/:id').put(updateQuestion).delete(deleteQuestion);
 router.get('/exams/:id/questions', getQuestions);
 router.post('/exams/:id/questions', addQuestion);
 router.post('/exams/:id/questions/bulk', upload.single('file'), bulkUploadQuestions);
-router.route('/questions/:id').put(updateQuestion).delete(deleteQuestion);
 
 // Monitoring & results
 router.get('/sessions/active', getActiveSessions);

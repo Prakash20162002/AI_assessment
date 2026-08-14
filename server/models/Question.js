@@ -2,11 +2,22 @@ const mongoose = require('mongoose');
 
 const questionSchema = new mongoose.Schema(
   {
+    subjectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Subject',
+      index: true,
+      default: null,
+    },
+    subjectName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     examId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Exam',
-      required: true,
       index: true,
+      default: null,
     },
     questionText: {
       type: String,
@@ -43,6 +54,11 @@ const questionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
   },
   { timestamps: true }
 );
@@ -50,3 +66,4 @@ const questionSchema = new mongoose.Schema(
 questionSchema.index({ examId: 1, order: 1 });
 
 module.exports = mongoose.model('Question', questionSchema);
+

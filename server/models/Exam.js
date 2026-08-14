@@ -61,6 +61,17 @@ const examSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    subject: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    subjectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Subject',
+      default: null,
+      index: true,
+    },
     questionCount: {
       type: Number,
       default: 0,

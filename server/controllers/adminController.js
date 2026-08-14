@@ -116,51 +116,112 @@ const syncExamStats = async (examId) => {
 
 // ─── Question Management ──────────────────────────────────────────────────────
 
-// @desc    Get all questions for an exam
-// @route   GET /api/admin/exams/:id/questions
+// @desc    Get questions (all platform questions, or filtered by subjectId / examId)
+// @route   GET /api/admin/questions OR GET /api/admin/exams/:id/questions
 const getQuestions = async (req, res, next) => {
   try {
-    const questions = await Question.find({ examId: req.params.id }).sort({ order: 1 });
-    // Backward compatibility fallback ensuring marks is always a positive number
+    const filter = {};
+    if (req.params.id) {
+      // Called via /api/admin/exams/:id/questions
+      const exam = await Exam.findById(req.params.id);
+      if (exam && exam.subjectId) {
+        filter.$or = [{ examId: exam._id }, { subjectId: exam.subjectId }];
+      } else {
+        filter.examId = req.params.id;
+      }
+    } else {
+      if (req.query.subjectId) filter.subjectId = req.query.subjectId;
+      if (req.query.examId) filter.examId = req.query.examId;
+    }
+
+    const questions = await Question.find(filter)
+      .sort({ createdAt: 1, order: 1 })
+      .populate('subjectId', 'name color')
+      .populate('examId', 'title');
+
     const normalizedQuestions = questions.map((q) => {
       const qObj = q.toObject();
       return {
         ...qObj,
+        id: qObj._id,
+        subjectId: qObj.subjectId?._id ? qObj.subjectId._id.toString() : (qObj.subjectId ? qObj.subjectId.toString() : ''),
         marks: Number(qObj.marks) > 0 ? Number(qObj.marks) : 1,
       };
     });
+
     res.json({ success: true, count: normalizedQuestions.length, data: normalizedQuestions });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Add a single question
-// @route   POST /api/admin/exams/:id/questions
+// @desc    Add a single question (supports Subject Bank and Exam assignment)
+// @route   POST /api/admin/questions OR POST /api/admin/exams/:id/questions
 const addQuestion = async (req, res, next) => {
   try {
-    const exam = await Exam.findById(req.params.id);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    const { subjectId, questionText, options, correctAnswer, marks, explanation, examId } = req.body;
+    const targetExamId = req.params.id || examId || null;
 
-    let marks = 1;
-    if (req.body.marks !== undefined && req.body.marks !== null && req.body.marks !== '') {
-      const parsedMarks = Number(req.body.marks);
-      if (isNaN(parsedMarks) || parsedMarks <= 0) {
-        return res.status(400).json({ success: false, message: 'Marks must be greater than 0.' });
-      }
-      marks = parsedMarks;
+    if (!questionText || !questionText.trim()) {
+      return res.status(400).json({ success: false, message: 'Question text is required' });
+    }
+    if (!options || !options.A || !options.B || !options.C || !options.D) {
+      return res.status(400).json({ success: false, message: 'All 4 options (A, B, C, D) are required' });
+    }
+    if (!correctAnswer || !['A', 'B', 'C', 'D'].includes(correctAnswer)) {
+      return res.status(400).json({ success: false, message: 'Valid correct answer (A, B, C, or D) is required' });
     }
 
-    const count = await Question.countDocuments({ examId: req.params.id });
+    let parsedMarks = 1;
+    if (marks !== undefined && marks !== null && marks !== '') {
+      const val = Number(marks);
+      if (isNaN(val) || val <= 0) {
+        return res.status(400).json({ success: false, message: 'Marks must be greater than 0' });
+      }
+      parsedMarks = val;
+    }
+
+    let resolvedSubjectId = subjectId || null;
+    let resolvedSubjectName = '';
+
+    if (resolvedSubjectId) {
+      const sub = await Subject.findById(resolvedSubjectId);
+      if (sub) {
+        resolvedSubjectName = sub.name;
+      }
+    } else if (targetExamId) {
+      const exam = await Exam.findById(targetExamId);
+      if (exam) {
+        resolvedSubjectId = exam.subjectId || null;
+        resolvedSubjectName = exam.subject || '';
+      }
+    }
+
+    const count = await Question.countDocuments(
+      resolvedSubjectId ? { subjectId: resolvedSubjectId } : (targetExamId ? { examId: targetExamId } : {})
+    );
+
     const question = await Question.create({
-      ...req.body,
-      marks,
-      examId: req.params.id,
+      questionText: questionText.trim(),
+      options: {
+        A: String(options.A).trim(),
+        B: String(options.B).trim(),
+        C: String(options.C).trim(),
+        D: String(options.D).trim(),
+      },
+      correctAnswer,
+      marks: parsedMarks,
+      explanation: (explanation || '').trim(),
+      subjectId: resolvedSubjectId,
+      subjectName: resolvedSubjectName,
+      examId: targetExamId,
       order: count,
+      createdBy: req.user?._id || null,
     });
 
-    // Recalculate and synchronize exam stats
-    await syncExamStats(req.params.id);
+    if (targetExamId) {
+      await syncExamStats(targetExamId);
+    }
 
     res.status(201).json({ success: true, data: question });
   } catch (error) {
@@ -240,22 +301,44 @@ const bulkUploadQuestions = async (req, res, next) => {
 // @route   PUT /api/admin/questions/:id
 const updateQuestion = async (req, res, next) => {
   try {
-    if (req.body.marks !== undefined && req.body.marks !== null && req.body.marks !== '') {
-      const parsedMarks = Number(req.body.marks);
-      if (isNaN(parsedMarks) || parsedMarks <= 0) {
-        return res.status(400).json({ success: false, message: 'Marks must be greater than 0.' });
-      }
-      req.body.marks = parsedMarks;
-    }
-
-    const question = await Question.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const question = await Question.findById(req.params.id);
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
 
-    // Recalculate exam total marks & count
-    await syncExamStats(question.examId);
+    const { questionText, options, correctAnswer, marks, explanation, subjectId, examId } = req.body;
+
+    if (questionText && questionText.trim()) question.questionText = questionText.trim();
+    if (options) {
+      if (options.A !== undefined) question.options.A = String(options.A).trim();
+      if (options.B !== undefined) question.options.B = String(options.B).trim();
+      if (options.C !== undefined) question.options.C = String(options.C).trim();
+      if (options.D !== undefined) question.options.D = String(options.D).trim();
+    }
+    if (correctAnswer && ['A', 'B', 'C', 'D'].includes(correctAnswer)) {
+      question.correctAnswer = correctAnswer;
+    }
+    if (marks !== undefined && marks !== null && marks !== '') {
+      const val = Number(marks);
+      if (isNaN(val) || val <= 0) {
+        return res.status(400).json({ success: false, message: 'Marks must be greater than 0' });
+      }
+      question.marks = val;
+    }
+    if (explanation !== undefined) question.explanation = String(explanation).trim();
+
+    if (subjectId) {
+      const sub = await Subject.findById(subjectId);
+      if (sub) {
+        question.subjectId = sub._id;
+        question.subjectName = sub.name;
+      }
+    }
+    if (examId !== undefined) question.examId = examId || null;
+
+    await question.save();
+
+    if (question.examId) {
+      await syncExamStats(question.examId);
+    }
 
     res.json({ success: true, data: question });
   } catch (error) {
@@ -272,9 +355,12 @@ const deleteQuestion = async (req, res, next) => {
 
     const examId = question.examId;
     await question.deleteOne();
-    await syncExamStats(examId);
 
-    res.json({ success: true, message: 'Question deleted' });
+    if (examId) {
+      await syncExamStats(examId);
+    }
+
+    res.json({ success: true, message: 'Question deleted successfully' });
   } catch (error) {
     next(error);
   }
@@ -286,10 +372,20 @@ const deleteQuestion = async (req, res, next) => {
 // @route   GET /api/admin/stats
 const getDashboardStats = async (req, res, next) => {
   try {
-    const [totalStudents, totalExams, publishedExams, activeSessionsCount, resultsCount] = await Promise.all([
+    const [
+      totalSubjects,
+      totalQuestions,
+      totalExams,
+      publishedExams,
+      totalStudents,
+      activeSessionsCount,
+      resultsCount,
+    ] = await Promise.all([
+      Subject.countDocuments(),
+      Question.countDocuments(),
+      Exam.countDocuments(),
+      Exam.countDocuments({ isPublished: true }),
       User.countDocuments({ role: 'student' }),
-      Exam.countDocuments({ createdBy: req.user._id }),
-      Exam.countDocuments({ createdBy: req.user._id, isPublished: true }),
       ExamSession.countDocuments({ status: 'ongoing' }),
       Result.countDocuments(),
     ]);
@@ -303,9 +399,11 @@ const getDashboardStats = async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        totalStudents,
+        totalSubjects,
+        totalQuestions,
         totalExams,
         publishedExams,
+        totalStudents,
         activeSessionsCount,
         resultsCount,
         recentResults,
@@ -754,8 +852,19 @@ const deleteSubject = async (req, res, next) => {
     if (!subject) {
       return res.status(404).json({ success: false, message: 'Subject not found' });
     }
+
+    // Cascade delete questions associated with this subject to prevent orphaned questions
+    await Question.deleteMany({
+      $or: [{ subjectId: subject._id }, { subjectName: subject.name }],
+    });
+
+    // Delete exams associated with this subject
+    await Exam.deleteMany({
+      $or: [{ subjectId: subject._id }, { subject: subject.name }],
+    });
+
     await subject.deleteOne();
-    res.json({ success: true, message: 'Subject deleted successfully' });
+    res.json({ success: true, message: 'Subject and associated questions and exams deleted successfully' });
   } catch (error) {
     next(error);
   }

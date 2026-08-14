@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { sendOTPEmail } = require('../services/emailService');
 const {
   sendTokenResponse,
@@ -61,12 +62,13 @@ const sendOTP = async (req, res, next) => {
     await user.save();
     console.log(`🔒 [OTP_STORED] Hashed OTP generated for ${maskEmail(user.email)}`);
 
-    console.log(`📧 [OTP_PROVIDER_REQUEST_STARTED] Sending email to ${maskEmail(user.email)}`);
+    const reqId = `otp_send_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    console.log(`📧 [OTP_PROVIDER_REQUEST_STARTED] [${reqId}] Sending email to ${maskEmail(user.email)}`);
     try {
-      await sendOTPEmail(user.email, user.name, rawOtp, 'verification');
-      console.log(`✅ [OTP_PROVIDER_SUCCESS] OTP delivered to ${maskEmail(user.email)}`);
+      await sendOTPEmail(user.email, user.name, rawOtp, 'verification', reqId);
+      console.log(`✅ [OTP_PROVIDER_SUCCESS] [${reqId}] OTP delivered to ${maskEmail(user.email)}`);
     } catch (emailError) {
-      console.error(`❌ [OTP_PROVIDER_FAILURE] Email dispatch failed for ${maskEmail(user.email)}: ${emailError.message}`);
+      console.error(`❌ [OTP_PROVIDER_FAILURE] [${reqId}] Email dispatch failed for ${maskEmail(user.email)}: ${emailError.message}`);
       return res.status(400).json({
         success: false,
         message: 'Unable to send OTP email. Please check your email address and try again.',
@@ -329,11 +331,12 @@ const login = async (req, res, next) => {
         await user.save();
         console.log(`🔑 [OTP_GENERATED] Login unverified fresh OTP generated for ${maskEmail(user.email)}`);
 
+        const reqId = `login_unverified_otp_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
         try {
-          await sendOTPEmail(user.email, user.name, rawOtp, 'verification');
-          console.log(`✅ [OTP_PROVIDER_SUCCESS] Login OTP delivered to ${maskEmail(user.email)}`);
+          await sendOTPEmail(user.email, user.name, rawOtp, 'verification', reqId);
+          console.log(`✅ [OTP_PROVIDER_SUCCESS] [${reqId}] Login OTP delivered to ${maskEmail(user.email)}`);
         } catch (emailErr) {
-          console.error(`❌ [OTP_PROVIDER_FAILURE] Login OTP delivery error: ${emailErr.message}`);
+          console.error(`❌ [OTP_PROVIDER_FAILURE] [${reqId}] Login OTP delivery error: ${emailErr.message}`);
         }
       }
 
@@ -394,12 +397,13 @@ const forgotPassword = async (req, res, next) => {
     const rawOtp = user.generateOTP();
     await user.save();
 
-    console.log(`📧 [OTP_PROVIDER_REQUEST_STARTED] Dispatching forgot password OTP to ${maskEmail(user.email)}`);
+    const reqId = `forgot_otp_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    console.log(`📧 [OTP_PROVIDER_REQUEST_STARTED] [${reqId}] Dispatching forgot password OTP to ${maskEmail(user.email)}`);
     try {
-      await sendOTPEmail(user.email, user.name, rawOtp, 'forgot');
-      console.log(`✅ [OTP_PROVIDER_SUCCESS] Forgot password OTP sent to ${maskEmail(user.email)}`);
+      await sendOTPEmail(user.email, user.name, rawOtp, 'forgot', reqId);
+      console.log(`✅ [OTP_PROVIDER_SUCCESS] [${reqId}] Forgot password OTP sent to ${maskEmail(user.email)}`);
     } catch (emailErr) {
-      console.error(`❌ [OTP_PROVIDER_FAILURE] Forgot password email failed: ${emailErr.message}`);
+      console.error(`❌ [OTP_PROVIDER_FAILURE] [${reqId}] Forgot password email failed: ${emailErr.message}`);
       return res.status(500).json({
         success: false,
         message: 'Unable to send password reset OTP. Please try again.',

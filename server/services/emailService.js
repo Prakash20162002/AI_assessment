@@ -1,6 +1,7 @@
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
 const dns = require('dns');
+const crypto = require('crypto');
 const { independenceDayOtpTemplate, PUBLIC_LOGO_URL } = require('../utils/emailTemplates');
 
 // Custom DNS lookup forcing IPv4 resolution for local dev fallback
@@ -53,8 +54,15 @@ const maskEmail = (email) => {
 /**
  * Send Email via Resend HTTPS API (Production Default) or Local SMTP Fallback
  */
-const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
-  console.log(`📧 [EMAIL_SEND_STARTED] [${reqId}] Recipient: ${maskEmail(to)}`);
+const sendEmail = async ({ to, subject, text, html, reqId, idempotencyKey }) => {
+  // Ensure a unique idempotency key per email operation (never reuse static 'sys')
+  const uniqueKey = (idempotencyKey && idempotencyKey !== 'sys')
+    ? idempotencyKey
+    : (reqId && reqId !== 'sys')
+      ? reqId
+      : `email_${Date.now()}_${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex')}`;
+
+  console.log(`📧 [EMAIL_SEND_STARTED] [${uniqueKey}] Recipient: ${maskEmail(to)}`);
   const startTime = Date.now();
 
   const providerSetting = (process.env.EMAIL_PROVIDER || 'resend').toLowerCase();
@@ -62,12 +70,12 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
 
   // --- PRODUCTION PATH: RESEND HTTPS API ---
   if (providerSetting === 'resend' || resendApiKey || process.env.NODE_ENV === 'production') {
-    console.log(`📡 [EMAIL_PROVIDER_REQUEST] [${reqId}] Provider: resend (Port 443 HTTPS)`);
+    console.log(`📡 [EMAIL_PROVIDER_REQUEST] [${uniqueKey}] Provider: resend (Port 443 HTTPS)`);
     const resend = getResendClient();
 
     if (!resend && !resendApiKey) {
       const errMsg = 'RESEND_API_KEY is not configured in environment variables.';
-      console.error(`❌ [EMAIL_PROVIDER_FAILURE] [${reqId}] Provider: resend | Error: ${errMsg}`);
+      console.error(`❌ [EMAIL_PROVIDER_FAILURE] [${uniqueKey}] Provider: resend | Error: ${errMsg}`);
       throw new Error(errMsg);
     }
 
@@ -76,7 +84,7 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
     const sender = `${fromName} <${fromAddress}>`;
 
     try {
-      // Official Resend Node SDK Call with Idempotency Key header
+      // Official Resend Node SDK Call with unique Idempotency Key header
       const { data, error } = await resend.emails.send(
         {
           from: sender,
@@ -87,23 +95,23 @@ const sendEmail = async ({ to, subject, text, html, reqId = 'sys' }) => {
         },
         {
           headers: {
-            'Idempotency-Key': reqId,
+            'Idempotency-Key': uniqueKey,
           },
         }
       );
 
       if (error) {
         const errorDetails = error.message || JSON.stringify(error);
-        console.error(`❌ [EMAIL_PROVIDER_FAILURE] [${reqId}] Provider: resend | Error: ${errorDetails}`);
+        console.error(`❌ [EMAIL_PROVIDER_FAILURE] [${uniqueKey}] Provider: resend | Error: ${errorDetails}`);
         throw new Error(`Resend API Error: ${errorDetails}`);
       }
 
       const duration = Date.now() - startTime;
-      console.log(`✅ [EMAIL_PROVIDER_SUCCESS] [${reqId}] Provider: resend Email ID: ${data.id} in ${duration}ms`);
-      console.log(`🎉 [EMAIL_SEND_COMPLETED] [${reqId}] OTP delivered successfully via Resend HTTPS API`);
+      console.log(`✅ [EMAIL_PROVIDER_SUCCESS] [${uniqueKey}] Provider: resend Email ID: ${data.id} in ${duration}ms`);
+      console.log(`🎉 [EMAIL_SEND_COMPLETED] [${uniqueKey}] OTP delivered successfully via Resend HTTPS API`);
       return { success: true, messageId: data.id, provider: 'resend' };
     } catch (resendError) {
-      console.error(`❌ [EMAIL_SEND_FAILED] [${reqId}] Provider: resend | ${resendError.message}`);
+      console.error(`❌ [EMAIL_SEND_FAILED] [${uniqueKey}] Provider: resend | ${resendError.message}`);
       throw new Error(resendError.message);
     }
   }
@@ -275,8 +283,11 @@ const generatePremiumEmailHtml = ({ name, titleText, mainHeading, bodyText, otpC
 /**
  * Send OTP Verification / Password Reset Email
  */
-const sendOTPEmail = async (email, name, otp, type = 'verification', reqId = 'sys') => {
+const sendOTPEmail = async (email, name, otp, type = 'verification', reqId = null) => {
   const expireMinutes = process.env.OTP_EXPIRE_MINUTES || 10;
+  const operationId = (reqId && reqId !== 'sys')
+    ? reqId
+    : `${type}_otp_${Date.now()}_${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString('hex')}`;
 
   const subjects = {
     verification: `Verify your email — DevPhoeniX Assessment (Code: ${otp})`,
@@ -309,10 +320,11 @@ const sendOTPEmail = async (email, name, otp, type = 'verification', reqId = 'sy
 
   return sendEmail({
     to: email,
-    subject: subjects[type],
+    subject: subjects[type] || `Your DevPhoeniX Verification Code: ${otp}`,
     text: plainText,
     html,
-    reqId,
+    reqId: operationId,
+    idempotencyKey: operationId,
   });
 };
 
